@@ -37,11 +37,18 @@ body {
   color: var(--ink);
   font-size: var(--base-font-size, 15px);
   font-family:
-    "Segoe UI",
+    "Avenir Next",
+    "SF Pro Text",
+    "SF Pro Display",
+    "Noto Sans JP",
+    "Hiragino Kaku Gothic ProN",
     system-ui,
     -apple-system,
     BlinkMacSystemFont,
     sans-serif;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -177,7 +184,9 @@ button {
   transition:
     background 120ms ease,
     color 120ms ease,
-    transform 120ms ease;
+    transform 120ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
 }
 
 .toolbar-button span {
@@ -198,6 +207,13 @@ button {
 .toolbar-button:hover {
   background: color-mix(in srgb, var(--ink) 12%, transparent);
   transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(16, 22, 28, 0.26);
+}
+
+.toolbar-button.icon-only {
+  min-width: 44px;
+  width: 44px;
+  padding: 0;
 }
 
 .toolbar-button:disabled {
@@ -220,6 +236,24 @@ button {
 .board-add {
   background: #277a66;
   box-shadow: 0 8px 20px rgba(39, 122, 102, 0.28);
+}
+
+.toolbar-button.board-create {
+  background: linear-gradient(180deg, #4b79ff, #325ddd);
+  box-shadow: 0 8px 20px rgba(52, 90, 204, 0.34);
+}
+
+.toolbar-button.board-create:hover {
+  background: linear-gradient(180deg, #5a86ff, #3b66e6);
+}
+
+.toolbar-button.card-create {
+  background: linear-gradient(180deg, #21a072, #1d845f);
+  box-shadow: 0 8px 20px rgba(29, 132, 95, 0.35);
+}
+
+.toolbar-button.card-create:hover {
+  background: linear-gradient(180deg, #27ad7b, #228b66);
 }
 
 .main {
@@ -314,6 +348,10 @@ button {
   background: rgba(255, 255, 255, 0.06);
   content: "";
   pointer-events: none;
+}
+
+.free-board.draw-mode::after {
+  background: rgba(247, 249, 252, 0.28);
 }
 
 .free-board.draw-mode .free-card {
@@ -909,10 +947,17 @@ button {
   background: color-mix(in srgb, var(--surface) 84%, transparent);
   color: var(--ink);
   text-align: left;
+  transition:
+    transform 140ms ease,
+    background 140ms ease,
+    border-color 160ms ease,
+    box-shadow 200ms ease;
 }
 
 .tool-button:hover {
   background: color-mix(in srgb, var(--ink) 8%, transparent);
+  transform: translateX(2px);
+  box-shadow: 0 5px 14px rgba(14, 20, 28, 0.24);
 }
 
 .tool-button.active {

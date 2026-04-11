@@ -308,6 +308,7 @@ export default function App() {
     setShowAddPanel(false);
     setShowShapePanel(false);
     setShowLabelPanel(false);
+    setIsAddMenuOpen(false);
   }, [currentBoardId]);
 
   useEffect(() => {
@@ -325,14 +326,20 @@ export default function App() {
         setActiveTool(null);
         setContextMenu(null);
         setIsAddMenuOpen(false);
+        setShowAddPanel(false);
+        setShowShapePanel(false);
+        setShowLabelPanel(false);
         return;
       }
 
       if (event.key === "Escape" && currentBoard) {
         event.preventDefault();
-        setCurrentBoardId(currentBoard.parentBoardId || null);
         setContextMenu(null);
         setIsAddMenuOpen(false);
+        setShowAddPanel(false);
+        setShowShapePanel(false);
+        setShowLabelPanel(false);
+        setCurrentBoardId(currentBoard.parentBoardId || null);
         return;
       }
 
@@ -1137,14 +1144,13 @@ export default function App() {
           </button>
           {currentBoard && (
             <button
-              className="toolbar-button"
+              className="toolbar-button compact icon-only"
               type="button"
               onClick={() => setCurrentBoardId(currentBoard.parentBoardId || null)}
               title="一つ上へ戻る"
               aria-label="一つ上へ戻る"
             >
-              <span>←</span>
-              <b>戻る</b>
+              <span>↩</span>
             </button>
           )}
           <button
@@ -1157,14 +1163,13 @@ export default function App() {
             <span>⚙</span>
           </button>
           <button
-            className="toolbar-button accent"
+            className="toolbar-button accent icon-only board-create"
             type="button"
             onClick={() => setDialog({ kind: "board" })}
             title="新規ボード"
             aria-label="新規ボード"
           >
-            <span>＋</span>
-            <b>ボード</b>
+            <span>🗂️</span>
           </button>
         </div>
       </header>
@@ -1212,14 +1217,13 @@ export default function App() {
               </div>
               <div className="menu">
                 <button
-                  className="toolbar-button accent board-add"
+                  className="toolbar-button accent icon-only board-add card-create"
                   type="button"
                   onClick={() => setIsAddMenuOpen((value) => !value)}
                   title="カードを追加"
                   aria-label="カードを追加"
                 >
-                  <span>＋</span>
-                  <b>カード</b>
+                  <span>🃏</span>
                 </button>
                 <div className="menu-panel" hidden={!isAddMenuOpen}>
                   <button type="button" onClick={() => openAdd("note")}>
