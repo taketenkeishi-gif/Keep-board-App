@@ -50,6 +50,14 @@ const itemLabels = {
   video: "動画",
   link: "リンク",
   board: "ボード",
+  todo: "To-do",
+  comment: "コメント",
+  column: "Column",
+  table: "Table",
+  draw: "Draw",
+  "shape-line": "Line",
+  "shape-rect": "Rect",
+  "shape-circle": "Circle",
 };
 
 function now() {
@@ -177,13 +185,20 @@ function getAspectBasedCardSize(width, height, fallbackType) {
     return {
       widthUnits: fallbackType === "image" || fallbackType === "video" ? 4 : 2,
       heightUnits: fallbackType === "image" || fallbackType === "video" ? 4 : 2,
+      aspectRatio: 1,
     };
   }
 
   const ratio = width / height;
-  const widthUnits = clamp(Math.round(clamp(ratio * 3.8, 3, 7)), MIN_CARD_SPAN, MAX_CARD_SPAN);
-  const heightUnits = clamp(Math.round(clamp(widthUnits / Math.max(ratio, 0.35), 3, 9)), MIN_CARD_ROWS, MAX_CARD_ROWS);
-  return { widthUnits, heightUnits };
+  const widthUnits = clamp(Math.round(clamp(ratio * 4.2, 3, 8)), MIN_CARD_SPAN, MAX_CARD_SPAN);
+  const pixelWidth = widthUnits * BOARD_UNIT + (widthUnits - 1) * BOARD_GAP;
+  const pixelHeight = pixelWidth / Math.max(ratio, 0.2);
+  const heightUnits = clamp(
+    Math.round((pixelHeight + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)),
+    MIN_CARD_ROWS,
+    MAX_CARD_ROWS,
+  );
+  return { widthUnits, heightUnits, aspectRatio: ratio };
 }
 
 export default function App() {
@@ -444,6 +459,45 @@ export default function App() {
     }));
   }
 
+  function createQuickItem(type, position = null) {
+    const createdAt = now();
+    const templates = {
+      note: { title: "新しいメモ", content: "", widthUnits: 3, heightUnits: 3 },
+      link: { title: "新しいリンク", content: "", url: "https://", widthUnits: 3, heightUnits: 2 },
+      todo: { title: "To-do", content: "・やること", widthUnits: 3, heightUnits: 3 },
+      comment: { title: "Comment", content: "コメントを書く", widthUnits: 3, heightUnits: 2 },
+      column: { title: "Column", content: "見出し\n本文", widthUnits: 4, heightUnits: 5 },
+      table: { title: "Table", content: "項目 | 内容\n--- | ---", widthUnits: 4, heightUnits: 4 },
+      "shape-line": { title: "Line", content: "", widthUnits: 4, heightUnits: 1, sticker: true },
+      "shape-rect": { title: "Rect", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
+      "shape-circle": { title: "Circle", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
+    };
+    const base = templates[type];
+    if (!base) return;
+
+    updateState((previous) => ({
+      ...previous,
+      items: [
+        ...previous.items,
+        {
+          id: createId("item"),
+          boardId: currentBoardId,
+          linkedBoardId: "",
+          order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length,
+          createdAt,
+          updatedAt: createdAt,
+          x: position?.x,
+          y: position?.y,
+          type,
+          url: "",
+          imagePath: "",
+          label: "",
+          ...base,
+        },
+      ],
+    }));
+  }
+
   async function saveItem(type, values, item = null) {
     const createdAt = now();
     const imagePath = values.imageFile?.size
@@ -462,6 +516,7 @@ export default function App() {
         label: values.label,
         imagePath,
         url: values.url,
+        aspectRatio: mediaSize.aspectRatio,
         ...(type === "image" || type === "video" ? mediaSize : {}),
         updatedAt: now(),
       };
@@ -1008,6 +1063,23 @@ export default function App() {
               }
               onClear={() => setSelectedLabels([])}
             />
+            <ToolSidebar
+              onPick={(tool) => {
+                if (tool === "image" || tool === "video" || tool === "link" || tool === "note") {
+                  setDialog({ kind: "item", type: tool });
+                  return;
+                }
+                if (tool === "board") {
+                  createSubBoard();
+                  return;
+                }
+                if (tool === "draw") {
+                  setDialog({ kind: "draw" });
+                  return;
+                }
+                createQuickItem(tool, { x: 40, y: 40 });
+              }}
+            />
             <BoardCanvas
               items={visibleBoardItems}
               boards={state.boards}
@@ -1028,6 +1100,17 @@ export default function App() {
               onItemContextMenu={openItemContextMenu}
               onMove={moveItemsOnBoard}
               onMoveToBoard={moveItemToBoard}
+              onQuickAdd={(tool, position) => {
+                if (tool === "board") {
+                  createSubBoard();
+                  return;
+                }
+                if (tool === "draw") {
+                  setDialog({ kind: "draw", position });
+                  return;
+                }
+                createQuickItem(tool, position);
+              }}
             />
             {!visibleBoardItems.length && (
               <p className="empty">{query ? "一致するカードがありません。" : "追加ボタンからカードを置けます。"}</p>
@@ -1099,6 +1182,40 @@ export default function App() {
           onSave={(nextSettings, nextTheme) => {
             setSettings(nextSettings);
             setTheme(nextTheme);
+            setDialog(null);
+          }}
+        />
+      )}
+
+      {dialog?.kind === "draw" && (
+        <DrawDialog
+          onClose={() => setDialog(null)}
+          onSave={(payload) => {
+            const createdAt = now();
+            updateState((previous) => ({
+              ...previous,
+              items: [
+                ...previous.items,
+                {
+                  id: createId("item"),
+                  boardId: currentBoardId,
+                  linkedBoardId: "",
+                  type: "draw",
+                  title: "Sticker",
+                  content: "",
+                  imagePath: payload.imagePath,
+                  label: "",
+                  sticker: true,
+                  widthUnits: 4,
+                  heightUnits: 4,
+                  x: dialog.position?.x,
+                  y: dialog.position?.y,
+                  order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length,
+                  createdAt,
+                  updatedAt: createdAt,
+                },
+              ],
+            }));
             setDialog(null);
           }}
         />
@@ -1238,6 +1355,9 @@ function distanceBetweenPositions(a, b) {
 }
 
 function findNearestOpenPosition(item, items, preferredPosition, excludeIds = new Set()) {
+  if (item.sticker) {
+    return clampPosition(item, preferredPosition);
+  }
   const size = getItemSize(item);
   const maxY =
     items.reduce((value, candidate) => Math.max(value, (candidate.y || 0) + itemRect(candidate).height), 0) + 2400;
@@ -1255,7 +1375,7 @@ function findNearestOpenPosition(item, items, preferredPosition, excludeIds = ne
         const candidate = clampPosition(item, { x: rawX, y });
         const rect = { x: candidate.x, y: candidate.y, width: size.width, height: size.height };
         const hasCollision = items.some((other) => {
-          if (other.id === item.id || excludeIds.has(other.id)) return false;
+          if (other.id === item.id || excludeIds.has(other.id) || other.sticker) return false;
           return overlaps(rect, itemRect(other));
         });
 
@@ -1287,6 +1407,14 @@ function resolveBoardPlacement(items, movedIds) {
 
   if (movedIds.length === 1) {
     const moved = byId.get(movedIds[0]);
+    if (moved?.sticker) {
+      return resolved.map((item) => {
+        const clone = { ...item };
+        delete clone.originX;
+        delete clone.originY;
+        return clone;
+      });
+    }
     const stationary = resolved.filter((item) => item.id !== moved.id);
     const collisions = stationary
       .map((candidate) => ({
@@ -1354,6 +1482,30 @@ function rectContainsPoint(rect, point) {
   return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
+function getDragCollisionPreview(positionedById, dragState, offset) {
+  if (!dragState || dragState.ids.length !== 1) return null;
+  const moved = positionedById.get(dragState.ids[0]);
+  if (!moved) return null;
+  const movedRect = itemRect({
+    ...moved,
+    x: clampPosition(moved, { x: dragState.origins[moved.id].x + offset.x, y: dragState.origins[moved.id].y + offset.y }).x,
+    y: clampPosition(moved, { x: dragState.origins[moved.id].x + offset.x, y: dragState.origins[moved.id].y + offset.y }).y,
+  });
+  const collisions = [...positionedById.values()]
+    .filter((candidate) => candidate.id !== moved.id && !candidate.sticker)
+    .map((candidate) => ({
+      id: candidate.id,
+      ratio: getOverlapRatio(movedRect, itemRect(candidate)),
+    }))
+    .filter((entry) => entry.ratio > 0)
+    .sort((a, b) => b.ratio - a.ratio);
+  if (!collisions.length) return null;
+  return {
+    targetId: collisions[0].id,
+    mode: collisions[0].ratio >= SWAP_OVERLAP_RATIO ? "swap" : "push",
+  };
+}
+
 function normalizeSelectionRect(start, current) {
   return {
     x: Math.min(start.x, current.x),
@@ -1389,6 +1541,15 @@ function buildSurfaceStyle(mode, color, image, fallback) {
 
 function getItemRows(item) {
   if (item.heightUnits) return item.heightUnits;
+  if (item.aspectRatio && (item.type === "image" || item.type === "video")) {
+    const widthUnits = item.widthUnits || 4;
+    const width = widthUnits * BOARD_UNIT + (widthUnits - 1) * BOARD_GAP;
+    return clamp(
+      Math.round((width / Math.max(item.aspectRatio, 0.2) + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)),
+      MIN_CARD_ROWS,
+      MAX_CARD_ROWS,
+    );
+  }
   if (item.type === "image" || item.type === "video") return 4;
   if (item.type === "board") return 3;
   return Math.min(6, Math.max(2, Math.ceil(((item.title || "").length + (item.content || "").length) / 80) + 2));
@@ -1627,23 +1788,18 @@ function BoardCanvas({
   onItemContextMenu,
   onMove,
   onMoveToBoard,
+  onQuickAdd,
 }) {
   const viewportRef = useRef(null);
   const boardRef = useRef(null);
+  const dragFrameRef = useRef(0);
   const [selectionRect, setSelectionRect] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [panState, setPanState] = useState(null);
   const positionedItems = useMemo(() => items.map((item, index) => withDefaultPosition(item, index)), [items]);
-  const previewById = dragState?.previewById || {};
   const positionedById = useMemo(
-    () =>
-      new Map(
-        positionedItems.map((item) => [
-          item.id,
-          previewById[item.id] ? { ...item, ...previewById[item.id] } : item,
-        ]),
-      ),
-    [positionedItems, previewById],
+    () => new Map(positionedItems.map((item) => [item.id, item])),
+    [positionedItems],
   );
   const canvasHeight =
     positionedItems.reduce((height, item) => Math.max(height, item.y + itemRect(item).height), 360) + 180;
@@ -1674,16 +1830,16 @@ function BoardCanvas({
       const point = toBoardPoint(event.clientX, event.clientY);
       const deltaX = point.x - dragState.startPoint.x;
       const deltaY = point.y - dragState.startPoint.y;
-      const preview = {};
-      dragState.ids.forEach((id) => {
-        const origin = dragState.origins[id];
-        const item = positionedById.get(id);
-        preview[id] = clampPosition(item, {
-          x: origin.x + deltaX,
-          y: origin.y + deltaY,
-        });
+      const nextOffset = { x: deltaX, y: deltaY };
+      const collisionPreview = getDragCollisionPreview(positionedById, dragState, nextOffset);
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = requestAnimationFrame(() => {
+        setDragState((currentState) => ({
+          ...currentState,
+          offset: nextOffset,
+          collisionPreview,
+        }));
       });
-      setDragState((currentState) => ({ ...currentState, previewById: preview }));
     }
 
     function handleGlobalPointerUp(event) {
@@ -1705,8 +1861,19 @@ function BoardCanvas({
       const targetBoardId = dropBoard?.dataset.boardDropId;
 
       const movedIds = dragState.ids;
-      const preview = dragState.previewById || {};
+      const preview = Object.fromEntries(
+        movedIds.map((id) => {
+          const origin = dragState.origins[id];
+          const item = positionedById.get(id);
+          const position = clampPosition(item, {
+            x: origin.x + (dragState.offset?.x || 0),
+            y: origin.y + (dragState.offset?.y || 0),
+          });
+          return [id, position];
+        }),
+      );
       setDragState(null);
+      cancelAnimationFrame(dragFrameRef.current);
       window.setTimeout(() => {
         delete document.body.dataset.internalCardDrag;
       }, 0);
@@ -1726,6 +1893,7 @@ function BoardCanvas({
     window.addEventListener("pointerup", handleGlobalPointerUp);
     window.addEventListener("pointercancel", handleGlobalPointerUp);
     return () => {
+      cancelAnimationFrame(dragFrameRef.current);
       window.removeEventListener("pointermove", handleGlobalPointerMove);
       window.removeEventListener("pointerup", handleGlobalPointerUp);
       window.removeEventListener("pointercancel", handleGlobalPointerUp);
@@ -1809,19 +1977,33 @@ function BoardCanvas({
     setDragState({
       ids: dragIds,
       startPoint: point,
+      offset: { x: 0, y: 0 },
       origins: Object.fromEntries(
         dragIds.map((id) => {
           const positioned = positionedById.get(id);
           return [id, { x: positioned.x || 0, y: positioned.y || 0 }];
         }),
       ),
-      previewById: Object.fromEntries(
-        dragIds.map((id) => {
-          const positioned = positionedById.get(id);
-          return [id, { x: positioned.x || 0, y: positioned.y || 0 }];
-        }),
-      ),
+      collisionPreview: null,
     });
+  }
+
+  function handleBoardDragOver(event) {
+    const tool = event.dataTransfer?.getData("application/x-keep-tool");
+    if (!tool) return;
+    event.preventDefault();
+  }
+
+  function handleBoardDrop(event) {
+    const tool = event.dataTransfer?.getData("application/x-keep-tool");
+    if (!tool) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const position = clampPosition(
+      { widthUnits: 4, heightUnits: 4, type: tool, sticker: tool.startsWith("shape-") || tool === "draw" },
+      toBoardPoint(event.clientX, event.clientY),
+    );
+    onQuickAdd(tool, position);
   }
 
   return (
@@ -1830,6 +2012,8 @@ function BoardCanvas({
       className={panState ? "board-viewport panning" : "board-viewport"}
       onPointerDown={handleViewportPointerDown}
       onWheel={handleWheel}
+      onDragOver={handleBoardDragOver}
+      onDrop={handleBoardDrop}
     >
       <div
         className="board-scale-shell"
@@ -1857,6 +2041,10 @@ function BoardCanvas({
               boards={boards}
               selected={selectedIds.includes(item.id)}
               dragging={dragState?.ids.includes(item.id)}
+              dragOffset={dragState?.ids.includes(item.id) ? dragState.offset : null}
+              dropIndicator={
+                dragState?.collisionPreview?.targetId === item.id ? dragState.collisionPreview.mode : null
+              }
               getBoardThumbnail={getBoardThumbnail}
               activeCaptionId={activeCaptionId}
               onOpenBoard={onOpenBoard}
@@ -1893,6 +2081,8 @@ function FreeCard({
   boards,
   selected,
   dragging,
+  dragOffset,
+  dropIndicator,
   getBoardThumbnail,
   activeCaptionId,
   onOpenBoard,
@@ -1915,6 +2105,7 @@ function FreeCard({
         "free-card",
         selected ? "selected-free" : "",
         dragging ? "dragging-free" : "",
+        dropIndicator ? `drop-${dropIndicator}` : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -1923,6 +2114,7 @@ function FreeCard({
         top: item.y || 0,
         width: size.width,
         height: size.height,
+        transform: dragOffset ? `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` : undefined,
       }}
       onDragStart={(event) => event.preventDefault()}
       onPointerDown={(event) => onPointerDown(event, item)}
@@ -1972,6 +2164,43 @@ function LabelSidebar({ labels, selectedLabels, onToggle, onClear }) {
           </button>
         )}
       </div>
+    </aside>
+  );
+}
+
+function ToolSidebar({ onPick }) {
+  const tools = [
+    { id: "note", label: "Note", icon: "📝" },
+    { id: "link", label: "Link", icon: "🔗" },
+    { id: "todo", label: "To-do", icon: "☑" },
+    { id: "comment", label: "Comment", icon: "💬" },
+    { id: "column", label: "Column", icon: "▤" },
+    { id: "table", label: "Table", icon: "▦" },
+    { id: "board", label: "Board", icon: "◫" },
+    { id: "shape-line", label: "Line", icon: "／" },
+    { id: "shape-rect", label: "Rect", icon: "▭" },
+    { id: "shape-circle", label: "Circle", icon: "◯" },
+    { id: "draw", label: "Draw", icon: "✎" },
+  ];
+
+  return (
+    <aside className="tool-sidebar">
+      {tools.map((tool) => (
+        <button
+          key={tool.id}
+          className="tool-button"
+          type="button"
+          draggable
+          onClick={() => onPick(tool.id)}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "copy";
+            event.dataTransfer.setData("application/x-keep-tool", tool.id);
+          }}
+        >
+          <span>{tool.icon}</span>
+          <small>{tool.label}</small>
+        </button>
+      ))}
     </aside>
   );
 }
@@ -2492,6 +2721,95 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
             </label>
           )}
         </section>
+        <DialogActions onClose={onClose} />
+      </form>
+    </Dialog>
+  );
+}
+
+function DrawDialog({ onClose, onSave }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!context) return;
+    context.fillStyle = "rgba(0,0,0,0)";
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.lineWidth = 6;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = "#ffffff";
+  }, []);
+
+  function getPoint(event) {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvasRef.current.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvasRef.current.height,
+    };
+  }
+
+  if (item.type === "draw" && item.imagePath) {
+    return (
+      <article className="card sticker-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <img className="sticker-image" src={item.imagePath} alt={item.title || "Draw sticker"} draggable="false" />
+      </article>
+    );
+  }
+
+  if (item.type === "shape-line") {
+    return <article className="card sticker-card sticker-line" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+  }
+
+  if (item.type === "shape-rect") {
+    return <article className="card sticker-card sticker-rect" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+  }
+
+  if (item.type === "shape-circle") {
+    return <article className="card sticker-card sticker-circle" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+  }
+
+  function startDraw(event) {
+    const context = canvasRef.current.getContext("2d");
+    const point = getPoint(event);
+    drawingRef.current = true;
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+  }
+
+  function moveDraw(event) {
+    if (!drawingRef.current) return;
+    const context = canvasRef.current.getContext("2d");
+    const point = getPoint(event);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+  }
+
+  function endDraw() {
+    drawingRef.current = false;
+  }
+
+  return (
+    <Dialog onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({ imagePath: canvasRef.current.toDataURL("image/png") });
+        }}
+      >
+        <h2>Draw Sticker</h2>
+        <canvas
+          ref={canvasRef}
+          className="draw-canvas"
+          width="720"
+          height="420"
+          onPointerDown={startDraw}
+          onPointerMove={moveDraw}
+          onPointerUp={endDraw}
+          onPointerLeave={endDraw}
+        />
         <DialogActions onClose={onClose} />
       </form>
     </Dialog>
