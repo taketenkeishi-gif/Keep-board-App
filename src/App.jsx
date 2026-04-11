@@ -2581,6 +2581,35 @@ function BoardCanvas({
     onActiveToolChange(null);
   }
 
+  function trimCanvasContent(sourceCanvas) {
+    const context = sourceCanvas.getContext("2d");
+    if (!context) return sourceCanvas;
+    const { width, height } = sourceCanvas;
+    const pixels = context.getImageData(0, 0, width, height).data;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const alpha = pixels[(y * width + x) * 4 + 3];
+        if (alpha <= 2) continue;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    if (maxX < minX || maxY < minY) return sourceCanvas;
+    const trimmed = document.createElement("canvas");
+    trimmed.width = Math.max(8, maxX - minX + 1);
+    trimmed.height = Math.max(8, maxY - minY + 1);
+    const trimmedContext = trimmed.getContext("2d");
+    if (!trimmedContext) return sourceCanvas;
+    trimmedContext.drawImage(sourceCanvas, minX, minY, trimmed.width, trimmed.height, 0, 0, trimmed.width, trimmed.height);
+    return trimmed;
+  }
+
   function handleDrawSave() {
     if (!drawStrokes.length) {
       handleDrawDiscard();
@@ -2602,8 +2631,8 @@ function BoardCanvas({
     if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
       return;
     }
-    const width = Math.max(36, Math.ceil(maxX - minX));
-    const height = Math.max(36, Math.ceil(maxY - minY));
+    const width = Math.max(12, Math.ceil(maxX - minX));
+    const height = Math.max(12, Math.ceil(maxY - minY));
     const offscreen = document.createElement("canvas");
     offscreen.width = width;
     offscreen.height = height;
@@ -2617,11 +2646,12 @@ function BoardCanvas({
       };
       paintStroke(context, translated);
     }
-    const widthUnits = clamp(Math.ceil((width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
-    const heightUnits = clamp(Math.ceil((height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 2, MAX_CARD_ROWS);
+    const trimmed = trimCanvasContent(offscreen);
+    const widthUnits = clamp(Math.ceil((trimmed.width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 1, MAX_CARD_SPAN);
+    const heightUnits = clamp(Math.ceil((trimmed.height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 1, MAX_CARD_ROWS);
     const position = clampPosition({ type: "draw", widthUnits, heightUnits, sticker: true }, { x: minX, y: minY });
     onQuickAdd("draw", position, {
-      imagePath: offscreen.toDataURL("image/png"),
+      imagePath: trimmed.toDataURL("image/png"),
       widthUnits,
       heightUnits,
       sticker: true,
@@ -2943,6 +2973,36 @@ function BoardSidebar({
                 <small>ラベル</small>
               </button>
             </div>
+            {showLabelPanel && (
+              <div className="label-panel sidebar-subpanel">
+                <label className="field">
+                  <span>並び替え</span>
+                  <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
+                    <option value="count-desc">使用数が多い順</option>
+                    <option value="selected-first">選択中を先頭</option>
+                    <option value="name-asc">名前 昇順</option>
+                    <option value="name-desc">名前 降順</option>
+                  </select>
+                </label>
+                {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
+                {sortedLabelStats.map((entry) => (
+                  <label className="label-check" key={entry.label}>
+                    <input
+                      type="checkbox"
+                      checked={selectedLabels.includes(entry.label)}
+                      onChange={() => onToggleLabel(entry.label)}
+                    />
+                    <span>{entry.label}</span>
+                    <small>{entry.count}</small>
+                  </label>
+                ))}
+                {!!selectedLabels.length && (
+                  <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
+                    すべて表示
+                  </button>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -3070,10 +3130,16 @@ function BoardSidebar({
           <section className="sidebar-section">
             <div className="sidebar-title">オブジェクト調整</div>
             {selectedItem.type === "draw" && (
-              <button className="tool-button image-tool" type="button" onClick={() => onImageAction("edit-draw", selectedItem)}>
-                <span>✎</span>
-                <small>Draw編集</small>
-              </button>
+              <>
+                <button className="tool-button image-tool" type="button" onClick={() => onImageAction("edit-draw", selectedItem)}>
+                  <span>✎</span>
+                  <small>Draw編集</small>
+                </button>
+                <button className="tool-button image-tool" type="button" onClick={() => onImageAction("crop", selectedItem)}>
+                  <span>✂</span>
+                  <small>クリップ</small>
+                </button>
+              </>
             )}
             {selectedItem.type !== "draw" && (
               <>
@@ -3110,44 +3176,6 @@ function BoardSidebar({
           </section>
         )}
 
-        {!hasContextPanel && (
-          <section className="sidebar-section">
-            <div className="sidebar-title">ラベル</div>
-            <button className="ghost sidebar-toggle" type="button" onClick={onToggleLabelPanel}>
-              {showLabelPanel ? "ラベル一覧を閉じる" : "ラベル一覧を開く"}
-            </button>
-            {showLabelPanel && (
-              <div className="label-panel">
-                <label className="field">
-                  <span>並び替え</span>
-                  <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
-                    <option value="count-desc">使用数が多い順</option>
-                    <option value="selected-first">選択中を先頭</option>
-                    <option value="name-asc">名前 昇順</option>
-                    <option value="name-desc">名前 降順</option>
-                  </select>
-                </label>
-                {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
-                {sortedLabelStats.map((entry) => (
-                  <label className="label-check" key={entry.label}>
-                    <input
-                      type="checkbox"
-                      checked={selectedLabels.includes(entry.label)}
-                      onChange={() => onToggleLabel(entry.label)}
-                    />
-                    <span>{entry.label}</span>
-                    <small>{entry.count}</small>
-                  </label>
-                ))}
-                {!!selectedLabels.length && (
-                  <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
-                    すべて表示
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
-        )}
       </div>
     </aside>
   );
@@ -3487,7 +3515,6 @@ function ItemCard({
         onContextMenu={(event) => onItemContextMenu(event, item)}
       >
         <div className="card-body">
-          <div className="card-kicker">リスト</div>
           <div className="todo-head">
             <EditableText
               value={item.title}
@@ -3920,9 +3947,14 @@ function ItemContextMenu({
         </>
       )}
       {item.type === "draw" && (
-        <button type="button" onClick={onDrawEdit}>
-          Draw を編集
-        </button>
+        <>
+          <button type="button" onClick={onDrawEdit}>
+            Draw を編集
+          </button>
+          <button type="button" onClick={onCrop}>
+            Draw をクリップ
+          </button>
+        </>
       )}
       {item.type !== "image" && item.type !== "video" && (
         <button type="button" onClick={onEdit}>

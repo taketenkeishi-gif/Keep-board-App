@@ -339,8 +339,7 @@ button {
   min-height: 520px;
   border-radius: 8px;
   background:
-    linear-gradient(var(--board-grid-color) 1px, transparent 1px) 0 0 / 48px 48px,
-    linear-gradient(90deg, var(--board-grid-color) 1px, transparent 1px) 0 0 / 48px 48px,
+    radial-gradient(circle at 1px 1px, var(--board-grid-color) 1.1px, transparent 1.2px) 0 0 / 18px 18px,
     var(--board-grid-surface);
 }
 
@@ -1019,6 +1018,10 @@ button {
   background: color-mix(in srgb, var(--surface) 88%, transparent);
 }
 
+.sidebar-subpanel {
+  margin-top: 6px;
+}
+
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -1278,8 +1281,14 @@ button {
   justify-self: start;
 }
 
+.inline-title-form {
+  margin: 8px 0 0;
+}
+
 .inline-title-form input {
   width: min(620px, 80vw);
+  display: block;
+  margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1287,6 +1296,7 @@ button {
   font-size: clamp(26px, 4vw, 42px);
   font-weight: 900;
   line-height: 1.08;
+  letter-spacing: 0.01em;
   outline: none;
 }
 
