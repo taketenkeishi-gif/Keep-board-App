@@ -221,6 +221,8 @@ export default function App() {
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [activeTool, setActiveTool] = useState(null);
   const [labelSortMode, setLabelSortMode] = useState("count-desc");
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [showShapePanel, setShowShapePanel] = useState(false);
   const [showLabelPanel, setShowLabelPanel] = useState(false);
   const mediaReplaceRef = useRef({ itemId: null });
   const undoStackRef = useRef([]);
@@ -268,6 +270,14 @@ export default function App() {
   const selectedItem = selectedItemIds.length
     ? boardItems.find((item) => item.id === selectedItemIds[0]) || null
     : null;
+  const selectedTextItem =
+    selectedItem &&
+    !selectedItem.sticker &&
+    selectedItem.type !== "image" &&
+    selectedItem.type !== "video" &&
+    selectedItem.type !== "board"
+      ? selectedItem
+      : null;
   const selectedImageItem =
     boardItems.find(
       (item) => selectedItemIds.includes(item.id) && (item.type === "image" || item.type === "video") && item.imagePath,
@@ -294,6 +304,8 @@ export default function App() {
     setSelectedItemIds([]);
     setActiveCaptionId(null);
     setActiveTool(null);
+    setShowAddPanel(false);
+    setShowShapePanel(false);
     setShowLabelPanel(false);
   }, [currentBoardId]);
 
@@ -927,17 +939,6 @@ export default function App() {
     }));
   }
 
-  function patchShapeStyle(itemId, patch) {
-    updateState((previous) => ({
-      ...previous,
-      items: previous.items.map((item) => {
-        if (item.id !== itemId) return item;
-        if (!item.sticker) return item;
-        return { ...item, ...patch, updatedAt: now() };
-      }),
-    }));
-  }
-
   function duplicateSelectedItems(itemIds = selectedItemIds) {
     if (!currentBoardId || !itemIds.length) return;
     updateState((previous) => {
@@ -1243,8 +1244,11 @@ export default function App() {
               labelStats={boardLabelStats}
               selectedLabels={selectedLabels}
               selectedItem={selectedItem}
+              selectedTextItem={selectedTextItem}
               activeTool={activeTool}
               selectedImageItem={selectedImageItem}
+              showAddPanel={showAddPanel}
+              showShapePanel={showShapePanel}
               labelSortMode={labelSortMode}
               showLabelPanel={showLabelPanel}
               onToggleLabel={(label) =>
@@ -1253,9 +1257,11 @@ export default function App() {
                 )
               }
               onClearLabels={() => setSelectedLabels([])}
+              onToggleAddPanel={() => setShowAddPanel((current) => !current)}
+              onToggleShapePanel={() => setShowShapePanel((current) => !current)}
               onLabelSortModeChange={setLabelSortMode}
               onToggleLabelPanel={() => setShowLabelPanel((current) => !current)}
-              onStyleChange={(item, patch) => patchShapeStyle(item.id, patch)}
+              onStyleChange={(item, patch) => patchItem(item.id, patch)}
               onImageAction={(action, item) => {
                 if (action === "crop") {
                   setDialog({ kind: "imageEdit", mode: "crop", item });
@@ -2632,41 +2638,38 @@ function BoardSidebar({
   labelStats,
   selectedLabels,
   selectedItem,
+  selectedTextItem,
   activeTool,
   selectedImageItem,
+  showAddPanel,
+  showShapePanel,
   labelSortMode,
   showLabelPanel,
   onToggleLabel,
   onClearLabels,
   onPick,
+  onToggleAddPanel,
+  onToggleShapePanel,
   onLabelSortModeChange,
   onToggleLabelPanel,
   onStyleChange,
   onImageAction,
 }) {
-  const sections = [
-    {
-      title: "追加",
-      tools: [
-        { id: "note", label: "Note", icon: "📝" },
-        { id: "image", label: "Image", icon: "🖼" },
-        { id: "link", label: "Link", icon: "🔗" },
-        { id: "todo", label: "To-do", icon: "☑" },
-        { id: "comment", label: "Comment", icon: "💬" },
-        { id: "column", label: "Column", icon: "▤" },
-        { id: "table", label: "Table", icon: "▦" },
-        { id: "board", label: "Board", icon: "◫" },
-      ],
-    },
-    {
-      title: "図形",
-      tools: [
-        { id: "shape-line", label: "Line", icon: "／" },
-        { id: "shape-rect", label: "Rect", icon: "▭" },
-        { id: "shape-circle", label: "Circle", icon: "◯" },
-        { id: "draw", label: "Draw", icon: "✎" },
-      ],
-    },
+  const addTools = [
+    { id: "note", label: "Note", icon: "📝" },
+    { id: "image", label: "Image", icon: "🖼" },
+    { id: "link", label: "Link", icon: "🔗" },
+    { id: "todo", label: "To-do", icon: "☑" },
+    { id: "comment", label: "Comment", icon: "💬" },
+    { id: "column", label: "Column", icon: "▤" },
+    { id: "table", label: "Table", icon: "▦" },
+    { id: "board", label: "Board", icon: "◫" },
+  ];
+  const shapeTools = [
+    { id: "shape-line", label: "Line", icon: "／" },
+    { id: "shape-rect", label: "Rect", icon: "▭" },
+    { id: "shape-circle", label: "Circle", icon: "◯" },
+    { id: "draw", label: "Draw", icon: "✎" },
   ];
   const sortedLabelStats = [...labelStats].sort((a, b) => {
     if (labelSortMode === "name-asc") return a.label.localeCompare(b.label, "ja");
@@ -2684,31 +2687,75 @@ function BoardSidebar({
     <aside className="board-sidebar">
       <div className="board-sidebar-tab">Tools</div>
       <div className="board-sidebar-panel">
-        {!selectedImageItem &&
-          sections.map((section) => (
-            <section className="sidebar-section" key={section.title}>
-              <div className="sidebar-title">{section.title}</div>
-              <div className="sidebar-tool-grid">
-                {section.tools.map((tool) => (
-                  <button
-                    key={tool.id}
-                    className={activeTool === tool.id ? "tool-button active" : "tool-button"}
-                    type="button"
-                    draggable
-                    onClick={() => onPick(tool.id)}
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = "copy";
-                      event.dataTransfer.setData("application/x-keep-tool", tool.id);
-                      event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
-                    }}
-                  >
-                    <span>{tool.icon}</span>
-                    <small>{tool.label}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
+        {!selectedImageItem && !selectedTextItem && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">メニュー</div>
+            <div className="sidebar-root-grid">
+              <button className={showAddPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleAddPanel}>
+                <span>＋</span>
+                <small>カード</small>
+              </button>
+              <button className={showShapePanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleShapePanel}>
+                <span>✎</span>
+                <small>図形</small>
+              </button>
+              <button className={showLabelPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleLabelPanel}>
+                <span>#</span>
+                <small>ラベル</small>
+              </button>
+            </div>
+          </section>
+        )}
+
+        {!selectedImageItem && !selectedTextItem && showAddPanel && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">カード追加</div>
+            <div className="sidebar-tool-grid">
+              {addTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
+                  type="button"
+                  draggable
+                  onClick={() => onPick(tool.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                    event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
+                  }}
+                >
+                  <span>{tool.icon}</span>
+                  <small>{tool.label}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {!selectedImageItem && !selectedTextItem && showShapePanel && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">図形追加</div>
+            <div className="sidebar-tool-grid">
+              {shapeTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
+                  type="button"
+                  draggable
+                  onClick={() => onPick(tool.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                    event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
+                  }}
+                >
+                  <span>{tool.icon}</span>
+                  <small>{tool.label}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {selectedImageItem && (
           <section className="sidebar-section">
@@ -2724,6 +2771,61 @@ function BoardSidebar({
               </button>
             )}
             <p className="sidebar-empty">画像カード選択中は専用メニューを表示します。</p>
+          </section>
+        )}
+
+        {selectedTextItem && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">テキストツール</div>
+            <label className="field">
+              <span>文字色</span>
+              <input
+                type="color"
+                value={selectedTextItem.textColor || "#232323"}
+                onChange={(event) => onStyleChange(selectedTextItem, { textColor: event.target.value })}
+              />
+            </label>
+            <div className="sidebar-text-tools">
+              <button
+                className={selectedTextItem.fontWeight === "700" ? "tool-button compact active" : "tool-button compact"}
+                type="button"
+                onClick={() => onStyleChange(selectedTextItem, { fontWeight: selectedTextItem.fontWeight === "700" ? "400" : "700" })}
+              >
+                <span>B</span>
+              </button>
+              <button
+                className={selectedTextItem.fontStyle === "italic" ? "tool-button compact active" : "tool-button compact"}
+                type="button"
+                onClick={() => onStyleChange(selectedTextItem, { fontStyle: selectedTextItem.fontStyle === "italic" ? "normal" : "italic" })}
+              >
+                <span>I</span>
+              </button>
+              <button
+                className={
+                  selectedTextItem.textDecoration === "underline" ? "tool-button compact active" : "tool-button compact"
+                }
+                type="button"
+                onClick={() =>
+                  onStyleChange(selectedTextItem, {
+                    textDecoration: selectedTextItem.textDecoration === "underline" ? "none" : "underline",
+                  })
+                }
+              >
+                <span>U</span>
+              </button>
+            </div>
+            <label className="field">
+              <span>寄せ</span>
+              <select
+                value={selectedTextItem.textAlign || "left"}
+                onChange={(event) => onStyleChange(selectedTextItem, { textAlign: event.target.value })}
+              >
+                <option value="left">左</option>
+                <option value="center">中央</option>
+                <option value="right">右</option>
+              </select>
+            </label>
+            <p className="sidebar-empty">テキストカード選択中は専用メニューを表示します。</p>
           </section>
         )}
 
@@ -2771,42 +2873,44 @@ function BoardSidebar({
           </section>
         )}
 
-        <section className="sidebar-section">
-          <div className="sidebar-title">ラベル</div>
-          <button className="ghost sidebar-toggle" type="button" onClick={onToggleLabelPanel}>
-            {showLabelPanel ? "ラベル一覧を閉じる" : "ラベル一覧を開く"}
-          </button>
-          {showLabelPanel && (
-            <div className="label-panel">
-              <label className="field">
-                <span>並び替え</span>
-                <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
-                  <option value="count-desc">使用数が多い順</option>
-                  <option value="selected-first">選択中を先頭</option>
-                  <option value="name-asc">名前 昇順</option>
-                  <option value="name-desc">名前 降順</option>
-                </select>
-              </label>
-              {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
-              {sortedLabelStats.map((entry) => (
-                <label className="label-check" key={entry.label}>
-                  <input
-                    type="checkbox"
-                    checked={selectedLabels.includes(entry.label)}
-                    onChange={() => onToggleLabel(entry.label)}
-                  />
-                  <span>{entry.label}</span>
-                  <small>{entry.count}</small>
+        {!selectedImageItem && !selectedTextItem && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">ラベル</div>
+            <button className="ghost sidebar-toggle" type="button" onClick={onToggleLabelPanel}>
+              {showLabelPanel ? "ラベル一覧を閉じる" : "ラベル一覧を開く"}
+            </button>
+            {showLabelPanel && (
+              <div className="label-panel">
+                <label className="field">
+                  <span>並び替え</span>
+                  <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
+                    <option value="count-desc">使用数が多い順</option>
+                    <option value="selected-first">選択中を先頭</option>
+                    <option value="name-asc">名前 昇順</option>
+                    <option value="name-desc">名前 降順</option>
+                  </select>
                 </label>
-              ))}
-              {!!selectedLabels.length && (
-                <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
-                  すべて表示
-                </button>
-              )}
-            </div>
-          )}
-        </section>
+                {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
+                {sortedLabelStats.map((entry) => (
+                  <label className="label-check" key={entry.label}>
+                    <input
+                      type="checkbox"
+                      checked={selectedLabels.includes(entry.label)}
+                      onChange={() => onToggleLabel(entry.label)}
+                    />
+                    <span>{entry.label}</span>
+                    <small>{entry.count}</small>
+                  </label>
+                ))}
+                {!!selectedLabels.length && (
+                  <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
+                    すべて表示
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </aside>
   );
@@ -2864,7 +2968,7 @@ function BoardCard({ board, thumbnail, count, onOpen, onContextMenu }) {
   );
 }
 
-function EditableText({ value, className, multiline = false, placeholder = "", displayAs = "div", onSave }) {
+function EditableText({ value, className, multiline = false, placeholder = "", displayAs = "div", style, onSave }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
 
@@ -2878,6 +2982,7 @@ function EditableText({ value, className, multiline = false, placeholder = "", d
     return (
       <Tag
         className={className}
+        style={style}
         onDoubleClick={(event) => {
           event.stopPropagation();
           setDraft(value || "");
@@ -2897,6 +3002,7 @@ function EditableText({ value, className, multiline = false, placeholder = "", d
   return multiline ? (
     <textarea
       className={`${className} inline-editor`}
+      style={style}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={save}
@@ -2917,6 +3023,7 @@ function EditableText({ value, className, multiline = false, placeholder = "", d
   ) : (
     <input
       className={`${className} inline-editor`}
+      style={style}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={save}
@@ -2957,6 +3064,14 @@ function ItemCard({
   onItemContextMenu,
   onTextDoubleClick,
 }) {
+  const itemTextStyle = {
+    color: item.textColor || undefined,
+    fontWeight: item.fontWeight || undefined,
+    fontStyle: item.fontStyle || undefined,
+    textDecoration: item.textDecoration || undefined,
+    textAlign: item.textAlign || undefined,
+  };
+
   if (item.type === "board") {
     return (
       <article
@@ -3004,6 +3119,7 @@ function ItemCard({
               className="caption-title"
               placeholder="Untitled"
               displayAs="div"
+              style={itemTextStyle}
               onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
             />
             <EditableText
@@ -3012,6 +3128,7 @@ function ItemCard({
               placeholder="メモを入力"
               multiline
               displayAs="div"
+              style={itemTextStyle}
               onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
             />
           </div>
@@ -3039,6 +3156,7 @@ function ItemCard({
               className="caption-title"
               placeholder="Untitled"
               displayAs="div"
+              style={itemTextStyle}
               onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
             />
             <EditableText
@@ -3047,6 +3165,7 @@ function ItemCard({
               placeholder="メモを入力"
               multiline
               displayAs="div"
+              style={itemTextStyle}
               onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
             />
           </div>
@@ -3138,6 +3257,7 @@ function ItemCard({
               className="card-title"
               placeholder="To-do"
               displayAs="h2"
+              style={itemTextStyle}
               onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
             />
             <button
@@ -3164,6 +3284,7 @@ function ItemCard({
                   className="todo-line-text"
                   placeholder="項目"
                   displayAs="span"
+                  style={itemTextStyle}
                   onSave={(nextLine) => onTodoEdit(item.id, index, nextLine)}
                 />
               </label>
@@ -3188,6 +3309,7 @@ function ItemCard({
             placeholder="コメントを書く"
             multiline
             displayAs="p"
+            style={itemTextStyle}
             onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
           />
         </div>
@@ -3209,6 +3331,7 @@ function ItemCard({
             className="card-title"
             placeholder="Column"
             displayAs="h2"
+            style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
           />
           {headline && (
@@ -3216,6 +3339,7 @@ function ItemCard({
               value={headline}
               className="column-headline"
               displayAs="p"
+              style={itemTextStyle}
               onSave={(nextHeadline) => onPatchItem(item.id, { content: [nextHeadline, ...bodyLines].join("\n") })}
             />
           )}
@@ -3225,6 +3349,7 @@ function ItemCard({
               className="card-content"
               multiline
               displayAs="p"
+              style={itemTextStyle}
               onSave={(nextBody) => onPatchItem(item.id, { content: [headline || "", ...nextBody.split(/\r?\n/)].join("\n").trim() })}
             />
           )}
@@ -3250,6 +3375,7 @@ function ItemCard({
             className="card-title"
             placeholder="Table"
             displayAs="h2"
+            style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
           />
           <div className="table-grid">
@@ -3278,6 +3404,7 @@ function ItemCard({
           className="card-title"
           placeholder={itemLabels[item.type]}
           displayAs="h2"
+          style={itemTextStyle}
           onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
         />
         {item.label && <span className="chip inline-chip">{item.label}</span>}
@@ -3287,6 +3414,7 @@ function ItemCard({
           placeholder=""
           multiline
           displayAs="p"
+          style={itemTextStyle}
           onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
         />
         {item.type === "link" && item.url && (
