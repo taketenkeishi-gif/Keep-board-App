@@ -2779,7 +2779,6 @@ function BoardSidebar({
                 <small>書き込み</small>
               </button>
             )}
-            <p className="sidebar-empty">画像カード選択中は専用メニューを表示します。</p>
           </section>
         )}
 
@@ -2834,7 +2833,6 @@ function BoardSidebar({
                 <option value="right">右</option>
               </select>
             </label>
-            <p className="sidebar-empty">テキストカード選択中は専用メニューを表示します。</p>
           </section>
         )}
 
@@ -4003,8 +4001,10 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
 
 function ImageEditDialog({ item, mode, onClose, onSave }) {
   const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
   const drawingRef = useRef(false);
   const cropDraftRef = useRef(null);
+  const textTransformRef = useRef(null);
   const [brushColor, setBrushColor] = useState("#ffef7f");
   const [brushSize, setBrushSize] = useState(5);
   const [annotateTool, setAnnotateTool] = useState("draw");
@@ -4012,6 +4012,9 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [imageRect, setImageRect] = useState(null);
   const [cropRect, setCropRect] = useState(null);
+  const [textAnnotations, setTextAnnotations] = useState([]);
+  const [activeTextId, setActiveTextId] = useState(null);
+  const [wrapSize, setWrapSize] = useState({ width: 900, height: 520 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -4033,7 +4036,21 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
       setHistoryIndex(0);
     };
     image.src = item.imagePath;
+    setTextAnnotations([]);
+    setActiveTextId(null);
   }, [item?.id, item?.imagePath, mode]);
+
+  useEffect(() => {
+    const element = wrapRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      setWrapSize({ width: rect.width || 900, height: rect.height || 520 });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   function saveSnapshot() {
     const canvas = canvasRef.current;
@@ -4060,6 +4077,12 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     image.src = history[targetIndex];
   }
 
+  function updateAnnotation(annotationId, patch) {
+    setTextAnnotations((previous) =>
+      previous.map((annotation) => (annotation.id === annotationId ? { ...annotation, ...patch } : annotation)),
+    );
+  }
+
   function getPoint(event) {
     const rect = canvasRef.current.getBoundingClientRect();
     return {
@@ -4068,19 +4091,68 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     };
   }
 
+  function beginTextTransform(event, annotation, mode = "move") {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveTextId(annotation.id);
+    textTransformRef.current = {
+      mode,
+      annotationId: annotation.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: annotation.x,
+      originY: annotation.y,
+      originSize: annotation.fontSize,
+    };
+
+    function handlePointerMove(moveEvent) {
+      const wrapRect = wrapRef.current?.getBoundingClientRect();
+      if (!wrapRect || !textTransformRef.current) return;
+      const scaleX = 900 / Math.max(wrapRect.width, 1);
+      const scaleY = 520 / Math.max(wrapRect.height, 1);
+      const deltaX = (moveEvent.clientX - textTransformRef.current.startX) * scaleX;
+      const deltaY = (moveEvent.clientY - textTransformRef.current.startY) * scaleY;
+      if (textTransformRef.current.mode === "resize") {
+        const nextSize = clamp(Math.round(textTransformRef.current.originSize + deltaY * 0.5 + deltaX * 0.15), 10, 220);
+        updateAnnotation(textTransformRef.current.annotationId, { fontSize: nextSize });
+      } else {
+        updateAnnotation(textTransformRef.current.annotationId, {
+          x: clamp(Math.round(textTransformRef.current.originX + deltaX), 0, 900),
+          y: clamp(Math.round(textTransformRef.current.originY + deltaY), 0, 520),
+        });
+      }
+    }
+
+    function handlePointerUp() {
+      textTransformRef.current = null;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+  }
+
   function startPointer(event) {
     if (!imageRect) return;
     const point = getPoint(event);
     if (mode === "annotate") {
       if (annotateTool === "text") {
-        const text = prompt("挿入テキスト");
-        if (text) {
-          const context = canvasRef.current.getContext("2d");
-          context.fillStyle = brushColor;
-          context.font = `${Math.max(12, brushSize * 4)}px "Segoe UI", sans-serif`;
-          context.fillText(text, point.x, point.y);
-          saveSnapshot();
-        }
+        const annotationId = createId("annotext");
+        setTextAnnotations((previous) => [
+          ...previous,
+          {
+            id: annotationId,
+            text: "Text",
+            x: clamp(Math.round(point.x), 0, 900),
+            y: clamp(Math.round(point.y), 0, 520),
+            fontSize: Math.max(14, brushSize * 4),
+            color: brushColor,
+          },
+        ]);
+        setActiveTextId(annotationId);
         return;
       }
       const context = canvasRef.current.getContext("2d");
@@ -4124,7 +4196,17 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   function handleSave(event) {
     event.preventDefault();
     if (mode === "annotate") {
-      onSave(canvasRef.current.toDataURL("image/png"));
+      const canvas = canvasRef.current;
+      const context = canvas?.getContext("2d");
+      if (!canvas || !context) return;
+      for (const annotation of textAnnotations) {
+        if (!annotation.text?.trim()) continue;
+        context.fillStyle = annotation.color || brushColor;
+        context.font = `${annotation.fontSize || 18}px "Segoe UI", sans-serif`;
+        context.textBaseline = "top";
+        context.fillText(annotation.text, annotation.x || 0, annotation.y || 0);
+      }
+      onSave(canvas.toDataURL("image/png"));
       return;
     }
     if (!cropRect || !imageRect || cropRect.width < 4 || cropRect.height < 4) return;
@@ -4156,16 +4238,41 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
           <div className="draw-toolbar">
             <label className="field draw-field">
               <span>色</span>
-              <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
+              <input
+                type="color"
+                value={
+                  annotateTool === "text" && activeTextId
+                    ? textAnnotations.find((annotation) => annotation.id === activeTextId)?.color || brushColor
+                    : brushColor
+                }
+                onChange={(event) => {
+                  const nextColor = event.target.value;
+                  setBrushColor(nextColor);
+                  if (annotateTool === "text" && activeTextId) {
+                    updateAnnotation(activeTextId, { color: nextColor });
+                  }
+                }}
+              />
             </label>
             <label className="field draw-field">
-              <span>太さ: {brushSize}px</span>
+              <span>{annotateTool === "draw" ? `太さ: ${brushSize}px` : "テキストサイズ"}</span>
               <input
                 type="range"
-                min="1"
-                max="30"
-                value={brushSize}
-                onChange={(event) => setBrushSize(Number(event.target.value))}
+                min={annotateTool === "draw" ? "1" : "10"}
+                max={annotateTool === "draw" ? "30" : "220"}
+                value={
+                  annotateTool === "draw"
+                    ? brushSize
+                    : textAnnotations.find((annotation) => annotation.id === activeTextId)?.fontSize || 24
+                }
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (annotateTool === "draw") {
+                    setBrushSize(next);
+                  } else if (activeTextId) {
+                    updateAnnotation(activeTextId, { fontSize: next });
+                  }
+                }}
               />
             </label>
             <button
@@ -4200,7 +4307,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             </button>
           </div>
         )}
-        <div className="image-edit-wrap">
+        <div className="image-edit-wrap" ref={wrapRef}>
           <canvas
             ref={canvasRef}
             className={mode === "crop" ? "draw-canvas crop-canvas" : "draw-canvas"}
@@ -4211,6 +4318,45 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             onPointerUp={endPointer}
             onPointerLeave={endPointer}
           />
+          {mode === "annotate" && (
+            <div className="annotation-layer" onPointerDown={() => setActiveTextId(null)}>
+              {textAnnotations.map((annotation) => {
+                const scaleX = wrapSize.width / 900;
+                const scaleY = wrapSize.height / 520;
+                const left = (annotation.x || 0) * scaleX;
+                const top = (annotation.y || 0) * scaleY;
+                const fontSize = (annotation.fontSize || 24) * scaleX;
+                const selected = activeTextId === annotation.id;
+                return (
+                  <div
+                    key={annotation.id}
+                    className={selected ? "annotation-text selected" : "annotation-text"}
+                    style={{
+                      left,
+                      top,
+                      color: annotation.color || "#ffffff",
+                      fontSize,
+                    }}
+                    onPointerDown={(event) => beginTextTransform(event, annotation, "move")}
+                  >
+                    <input
+                      value={annotation.text}
+                      onChange={(event) => updateAnnotation(annotation.id, { text: event.target.value })}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    />
+                    {selected && (
+                      <button
+                        className="annotation-resize"
+                        type="button"
+                        onPointerDown={(event) => beginTextTransform(event, annotation, "resize")}
+                        aria-label="テキストサイズを調整"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {mode === "crop" && cropRect && (
             <div
               className="crop-overlay"

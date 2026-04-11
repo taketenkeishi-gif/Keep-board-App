@@ -556,12 +556,15 @@ button {
 .inline-editor {
   width: 100%;
   margin: 0;
-  padding: 4px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: inherit;
+  font: inherit;
+  text-align: inherit;
   line-height: inherit;
+  outline: none;
 }
 
 .card-body {
@@ -730,12 +733,8 @@ button {
   left: 0;
   z-index: 12;
   width: 224px;
-  transform: translateX(-184px);
-  transition: transform 180ms ease;
-}
-
-.board-sidebar:hover {
   transform: translateX(0);
+  transition: transform 180ms ease;
 }
 
 .board-sidebar-tab {
@@ -743,13 +742,13 @@ button {
   top: 18px;
   right: 0;
   z-index: 2;
-  writing-mode: vertical-rl;
-  padding: 10px 8px;
+  writing-mode: horizontal-tb;
+  padding: 8px 10px;
   border-radius: 0 8px 8px 0;
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 70%, #101520 30%);
   color: white;
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .board-sidebar-panel {
@@ -831,6 +830,16 @@ button {
 
 .tool-button.image-tool {
   min-height: 40px;
+}
+
+.board-sidebar .field input[type="color"] {
+  width: 44px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
 }
 
 .sidebar-text-tools {
@@ -1245,7 +1254,7 @@ button {
 }
 
 .lightbox.zoomed {
-  grid-template-columns: 72px 1fr 72px;
+  grid-template-columns: 1fr;
   gap: 0;
   padding: 0;
 }
@@ -1296,18 +1305,22 @@ button {
 
 .editable-lightbox-title {
   cursor: text;
+  font-size: 18px;
+  line-height: 1.2;
 }
 
 .lightbox-title-input {
   min-width: 220px;
   max-width: 58vw;
-  padding: 6px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.35);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: white;
   font-size: 18px;
   font-weight: 700;
+  line-height: 1.2;
+  outline: none;
 }
 
 .draw-actions {
@@ -1321,12 +1334,72 @@ button {
   align-items: flex-end;
 }
 
+.draw-toolbar .secondary {
+  background: #2a313a;
+  color: #f3f6fa;
+  border: 1px solid #3a4452;
+}
+
+.draw-toolbar .secondary:disabled {
+  opacity: 0.45;
+  color: #aab2bc;
+}
+
 .draw-field {
   min-width: 140px;
 }
 
+.draw-field input[type="color"] {
+  width: 44px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid #3a4452;
+  background: #111723;
+  cursor: pointer;
+}
+
 .image-edit-wrap {
   position: relative;
+}
+
+.annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+
+.annotation-text {
+  position: absolute;
+  min-width: 48px;
+  pointer-events: auto;
+}
+
+.annotation-text input {
+  min-width: 64px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.annotation-text.selected input {
+  border-color: rgba(255, 255, 255, 0.72);
+  background: rgba(12, 16, 24, 0.34);
+}
+
+.annotation-resize {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.82);
+  cursor: nwse-resize;
 }
 
 .crop-overlay {
