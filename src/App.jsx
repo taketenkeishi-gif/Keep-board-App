@@ -217,6 +217,7 @@ export default function App() {
   const [titleDraft, setTitleDraft] = useState("");
   const [selectedLabels, setSelectedLabels] = useState([]);
   const [selectedItemIds, setSelectedItemIds] = useState([]);
+  const [activeTool, setActiveTool] = useState(null);
   const mediaReplaceRef = useRef({ itemId: null });
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
@@ -273,6 +274,7 @@ export default function App() {
   useEffect(() => {
     setSelectedItemIds([]);
     setActiveCaptionId(null);
+    setActiveTool(null);
   }, [currentBoardId]);
 
   useEffect(() => {
@@ -282,6 +284,16 @@ export default function App() {
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
       if (typing) return;
+
+      if (lightboxId) return;
+
+      if (event.key === "Escape" && activeTool) {
+        event.preventDefault();
+        setActiveTool(null);
+        setContextMenu(null);
+        setIsAddMenuOpen(false);
+        return;
+      }
 
       if (event.key === "Escape" && currentBoard) {
         event.preventDefault();
@@ -320,7 +332,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentBoard, selectedItemIds, state]);
+  }, [activeTool, currentBoard, lightboxId, selectedItemIds, state]);
 
   const appShellStyle = buildSurfaceStyle(
     settings.appBackgroundMode,
@@ -460,7 +472,7 @@ export default function App() {
     }));
   }
 
-  function createQuickItem(type, position = null) {
+  function createQuickItem(type, position = null, overrides = {}) {
     const createdAt = now();
     const templates = {
       note: { title: "新しいメモ", content: "", widthUnits: 3, heightUnits: 3 },
@@ -469,6 +481,7 @@ export default function App() {
       comment: { title: "Comment", content: "コメントを書く", widthUnits: 3, heightUnits: 2 },
       column: { title: "Column", content: "見出し\n本文", widthUnits: 4, heightUnits: 5 },
       table: { title: "Table", content: "項目 | 内容\n--- | ---", widthUnits: 4, heightUnits: 4 },
+      draw: { title: "Sticker", content: "", widthUnits: 4, heightUnits: 4, sticker: true },
       "shape-line": { title: "Line", content: "", widthUnits: 4, heightUnits: 1, sticker: true },
       "shape-rect": { title: "Rect", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
       "shape-circle": { title: "Circle", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
@@ -494,8 +507,42 @@ export default function App() {
           imagePath: "",
           label: "",
           ...base,
+          ...overrides,
         },
       ],
+    }));
+  }
+
+  function appendTodoItem(itemId) {
+    updateState((previous) => ({
+      ...previous,
+      items: previous.items.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              content: `${item.content || ""}${item.content ? "\n" : ""}・新しい項目`,
+              updatedAt: now(),
+            }
+          : item,
+      ),
+    }));
+  }
+
+  function toggleTodoLine(itemId, lineIndex) {
+    updateState((previous) => ({
+      ...previous,
+      items: previous.items.map((item) => {
+        if (item.id !== itemId) return item;
+        const lines = (item.content || "").split(/\r?\n/);
+        lines[lineIndex] = lines[lineIndex].trim().startsWith("[x]")
+          ? lines[lineIndex].replace(/^\[x\]\s*/i, "")
+          : `[x] ${lines[lineIndex].replace(/^\[( |x)\]\s*/i, "").replace(/^・\s*/, "")}`;
+        return {
+          ...item,
+          content: lines.join("\n"),
+          updatedAt: now(),
+        };
+      }),
     }));
   }
 
@@ -1093,17 +1140,16 @@ export default function App() {
                 </div>
               </div>
             </section>
-            <LabelSidebar
+            <BoardSidebar
               labels={boardLabels}
               selectedLabels={selectedLabels}
-              onToggle={(label) =>
+              activeTool={activeTool}
+              onToggleLabel={(label) =>
                 setSelectedLabels((labels) =>
                   labels.includes(label) ? labels.filter((item) => item !== label) : [...labels, label],
                 )
               }
-              onClear={() => setSelectedLabels([])}
-            />
-            <ToolSidebar
+              onClearLabels={() => setSelectedLabels([])}
               onPick={(tool) => {
                 if (tool === "image" || tool === "video" || tool === "link" || tool === "note") {
                   setDialog({ kind: "item", type: tool });
@@ -1113,8 +1159,8 @@ export default function App() {
                   createSubBoard();
                   return;
                 }
-                if (tool === "draw") {
-                  setDialog({ kind: "draw" });
+                if (tool === "draw" || tool.startsWith("shape-")) {
+                  setActiveTool((current) => (current === tool ? null : tool));
                   return;
                 }
                 createQuickItem(tool, { x: 40, y: 40 });
@@ -1134,22 +1180,34 @@ export default function App() {
               onBoardContextMenu={openBoardContextMenu}
               onEdit={(target) => setDialog({ kind: "item", type: target.type, item: target })}
               onDelete={deleteItem}
+              onTodoAdd={appendTodoItem}
+              onTodoToggle={toggleTodoLine}
               onResize={resizeMediaItem}
               onToggleCaption={setActiveCaptionId}
               onOpenLightbox={setLightboxId}
               onItemContextMenu={openItemContextMenu}
               onMove={moveItemsOnBoard}
               onMoveToBoard={moveItemToBoard}
-              onQuickAdd={(tool, position) => {
+              activeTool={activeTool}
+              onActiveToolChange={setActiveTool}
+              onQuickAdd={(tool, position, overrides = {}) => {
                 if (tool === "board") {
                   createSubBoard();
                   return;
                 }
                 if (tool === "draw") {
-                  setDialog({ kind: "draw", position });
+                  if (overrides.imagePath) {
+                    createQuickItem("draw", position, overrides);
+                    return;
+                  }
+                  setActiveTool("draw");
                   return;
                 }
-                createQuickItem(tool, position);
+                if (tool === "image" || tool === "video") {
+                  setDialog({ kind: "item", type: tool, position });
+                  return;
+                }
+                createQuickItem(tool, position, overrides);
               }}
             />
             {!visibleBoardItems.length && (
@@ -1226,41 +1284,6 @@ export default function App() {
           }}
         />
       )}
-
-      {dialog?.kind === "draw" && (
-        <DrawDialog
-          onClose={() => setDialog(null)}
-          onSave={(payload) => {
-            const createdAt = now();
-            updateState((previous) => ({
-              ...previous,
-              items: [
-                ...previous.items,
-                {
-                  id: createId("item"),
-                  boardId: currentBoardId,
-                  linkedBoardId: "",
-                  type: "draw",
-                  title: "Sticker",
-                  content: "",
-                  imagePath: payload.imagePath,
-                  label: "",
-                  sticker: true,
-                  widthUnits: 4,
-                  heightUnits: 4,
-                  x: dialog.position?.x,
-                  y: dialog.position?.y,
-                  order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length,
-                  createdAt,
-                  updatedAt: createdAt,
-                },
-              ],
-            }));
-            setDialog(null);
-          }}
-        />
-      )}
-
       {contextMenu?.board && (
         <BoardContextMenu
           x={contextMenu.x}
@@ -1408,22 +1431,32 @@ function findNearestOpenPosition(item, items, preferredPosition, excludeIds = ne
   const start = clampPosition(item, preferredPosition);
   let best = null;
 
+  function fits(candidate) {
+    const rect = { x: candidate.x, y: candidate.y, width: size.width, height: size.height };
+    return !items.some((other) => {
+      if (other.id === item.id || excludeIds.has(other.id) || other.sticker) return false;
+      return overlaps(rect, itemRect(other));
+    });
+  }
+
+  const edgeSweeps = [
+    start,
+    clampPosition(item, { x: start.x - size.width - BOARD_GAP, y: start.y }),
+    clampPosition(item, { x: start.x + size.width + BOARD_GAP, y: start.y }),
+  ];
+
+  for (const candidate of edgeSweeps) {
+    if (fits(candidate)) return candidate;
+  }
+
   for (let radius = 0; radius <= maxY + BOARD_CANVAS_WIDTH; radius += BOARD_DROP_STEP) {
     for (let y = Math.max(0, start.y - radius); y <= Math.min(maxY, start.y + radius); y += BOARD_DROP_STEP) {
       const horizontalReach = Math.max(0, radius - Math.abs(y - start.y));
-      const candidates = horizontalReach
-        ? [start.x - horizontalReach, start.x + horizontalReach]
-        : [start.x];
+      const candidates = horizontalReach ? [start.x, start.x - horizontalReach, start.x + horizontalReach] : [start.x];
 
       for (const rawX of candidates) {
         const candidate = clampPosition(item, { x: rawX, y });
-        const rect = { x: candidate.x, y: candidate.y, width: size.width, height: size.height };
-        const hasCollision = items.some((other) => {
-          if (other.id === item.id || excludeIds.has(other.id) || other.sticker) return false;
-          return overlaps(rect, itemRect(other));
-        });
-
-        if (!hasCollision) {
+        if (fits(candidate)) {
           const score = distanceBetweenPositions(candidate, start);
           if (!best || score < best.score) {
             best = { ...candidate, score };
@@ -1638,7 +1671,7 @@ async function createItemFromDrop(dataTransfer) {
   if (videoUrl) {
     return {
       type: "video",
-      title: titleFromUrl(videoUrl) || "繝峨Ο繝・・蜍慕判",
+      title: titleFromUrl(videoUrl) || "動画",
       content: "",
       imagePath: videoUrl,
       url: videoUrl,
@@ -1674,7 +1707,7 @@ async function createItemFromDrop(dataTransfer) {
   if (text) {
     return {
       type: "note",
-      title: text.split(/\r?\n/)[0].slice(0, 60) || "繝峨Ο繝・・繝｡繝｢",
+      title: text.split(/\r?\n/)[0].slice(0, 60) || "ドロップメモ",
       content: text,
       imagePath: "",
       url: "",
@@ -1826,20 +1859,27 @@ function BoardCanvas({
   onBoardContextMenu,
   onEdit,
   onDelete,
+  onTodoAdd,
+  onTodoToggle,
   onResize,
   onToggleCaption,
   onOpenLightbox,
   onItemContextMenu,
   onMove,
   onMoveToBoard,
+  activeTool,
+  onActiveToolChange,
   onQuickAdd,
 }) {
   const viewportRef = useRef(null);
   const boardRef = useRef(null);
+  const toolCanvasRef = useRef(null);
+  const drawDraftRef = useRef(null);
   const dragFrameRef = useRef(0);
   const [selectionRect, setSelectionRect] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [panState, setPanState] = useState(null);
+  const [shapeDraft, setShapeDraft] = useState(null);
   const positionedItems = useMemo(() => items.map((item, index) => withDefaultPosition(item, index)), [items]);
   const positionedById = useMemo(
     () => new Map(positionedItems.map((item) => [item.id, item])),
@@ -1847,6 +1887,30 @@ function BoardCanvas({
   );
   const canvasHeight =
     positionedItems.reduce((height, item) => Math.max(height, item.y + itemRect(item).height), 360) + 180;
+
+  useEffect(() => {
+    const canvas = toolCanvasRef.current;
+    if (!canvas) return;
+    canvas.width = BOARD_CANVAS_WIDTH;
+    canvas.height = canvasHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = "rgba(255, 255, 255, 0.98)";
+    context.lineWidth = 10;
+  }, [activeTool, canvasHeight]);
+
+  useEffect(() => {
+    if (activeTool) return;
+    drawDraftRef.current = null;
+    setShapeDraft(null);
+    const context = toolCanvasRef.current?.getContext("2d");
+    const canvas = toolCanvasRef.current;
+    if (!context || !canvas) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  }, [activeTool]);
 
   useEffect(() => {
     function handleGlobalPointerMove(event) {
@@ -1866,6 +1930,28 @@ function BoardCanvas({
         onSelectedIdsChange(
           positionedItems.filter((item) => intersectsSelection(item, nextRect)).map((item) => item.id),
         );
+        return;
+      }
+
+      if (drawDraftRef.current) {
+        event.preventDefault();
+        const context = toolCanvasRef.current?.getContext("2d");
+        if (!context) return;
+        const point = toBoardPoint(event.clientX, event.clientY);
+        context.lineTo(point.x, point.y);
+        context.stroke();
+        drawDraftRef.current.points.push(point);
+        drawDraftRef.current.minX = Math.min(drawDraftRef.current.minX, point.x);
+        drawDraftRef.current.minY = Math.min(drawDraftRef.current.minY, point.y);
+        drawDraftRef.current.maxX = Math.max(drawDraftRef.current.maxX, point.x);
+        drawDraftRef.current.maxY = Math.max(drawDraftRef.current.maxY, point.y);
+        return;
+      }
+
+      if (shapeDraft) {
+        event.preventDefault();
+        const current = toBoardPoint(event.clientX, event.clientY);
+        setShapeDraft((previous) => (previous ? { ...previous, current } : previous));
         return;
       }
 
@@ -1894,6 +1980,60 @@ function BoardCanvas({
 
       if (selectionRect) {
         setSelectionRect(null);
+        return;
+      }
+
+      if (drawDraftRef.current) {
+        const draft = drawDraftRef.current;
+        drawDraftRef.current = null;
+        const canvas = toolCanvasRef.current;
+        const context = canvas?.getContext("2d");
+        if (!canvas || !context) return;
+        const padding = 14;
+        const width = Math.max(36, Math.ceil(draft.maxX - draft.minX + padding * 2));
+        const height = Math.max(36, Math.ceil(draft.maxY - draft.minY + padding * 2));
+        const sourceX = Math.max(0, draft.minX - padding);
+        const sourceY = Math.max(0, draft.minY - padding);
+        const offscreen = document.createElement("canvas");
+        offscreen.width = width;
+        offscreen.height = height;
+        const offscreenContext = offscreen.getContext("2d");
+        offscreenContext.drawImage(canvas, sourceX, sourceY, width, height, 0, 0, width, height);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        const widthUnits = clamp(Math.ceil(width / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
+        const heightUnits = clamp(Math.ceil(height / (BOARD_ROW + BOARD_GAP)), 2, MAX_CARD_ROWS);
+        onQuickAdd(
+          "draw",
+          clampPosition({ type: "draw", widthUnits, heightUnits, sticker: true }, { x: sourceX, y: sourceY }),
+          {
+            imagePath: offscreen.toDataURL("image/png"),
+            widthUnits,
+            heightUnits,
+            sticker: true,
+          },
+        );
+        onActiveToolChange(null);
+        return;
+      }
+
+      if (shapeDraft) {
+        const rect = normalizeSelectionRect(shapeDraft.start, shapeDraft.current);
+        const widthUnits = clamp(Math.ceil((rect.width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
+        const heightUnits = clamp(Math.ceil((rect.height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 1, MAX_CARD_ROWS);
+        onQuickAdd(
+          shapeDraft.tool,
+          clampPosition(
+            { type: shapeDraft.tool, widthUnits, heightUnits, sticker: true },
+            { x: rect.x, y: rect.y },
+          ),
+          {
+            widthUnits,
+            heightUnits: shapeDraft.tool === "shape-line" ? Math.max(1, Math.min(2, heightUnits)) : heightUnits,
+            sticker: true,
+          },
+        );
+        setShapeDraft(null);
+        onActiveToolChange(null);
         return;
       }
 
@@ -1942,7 +2082,17 @@ function BoardCanvas({
       window.removeEventListener("pointerup", handleGlobalPointerUp);
       window.removeEventListener("pointercancel", handleGlobalPointerUp);
     };
-  }, [dragState, onMove, onMoveToBoard, onSelectedIdsChange, panState, positionedById, positionedItems, selectionRect]);
+  }, [
+    dragState,
+    onMove,
+    onMoveToBoard,
+    onSelectedIdsChange,
+    panState,
+    positionedById,
+    positionedItems,
+    selectionRect,
+    shapeDraft,
+  ]);
 
   function toBoardPoint(clientX, clientY) {
     const boardRect = boardRef.current?.getBoundingClientRect();
@@ -1969,6 +2119,30 @@ function BoardCanvas({
 
     if (event.button !== 0) return;
     if (event.target.closest(".free-card, button, a, input, textarea, select, video")) return;
+
+    if (activeTool === "draw") {
+      event.preventDefault();
+      const start = toBoardPoint(event.clientX, event.clientY);
+      const context = toolCanvasRef.current?.getContext("2d");
+      if (!context) return;
+      context.beginPath();
+      context.moveTo(start.x, start.y);
+      drawDraftRef.current = {
+        points: [start],
+        minX: start.x,
+        minY: start.y,
+        maxX: start.x,
+        maxY: start.y,
+      };
+      return;
+    }
+
+    if (activeTool?.startsWith("shape-")) {
+      event.preventDefault();
+      const start = toBoardPoint(event.clientX, event.clientY);
+      setShapeDraft({ tool: activeTool, start, current: start });
+      return;
+    }
 
     const anchor = toBoardPoint(event.clientX, event.clientY);
     onSelectedIdsChange([]);
@@ -2047,6 +2221,10 @@ function BoardCanvas({
       { widthUnits: 4, heightUnits: 4, type: tool, sticker: tool.startsWith("shape-") || tool === "draw" },
       toBoardPoint(event.clientX, event.clientY),
     );
+    if (tool === "draw") {
+      onActiveToolChange("draw");
+      return;
+    }
     onQuickAdd(tool, position);
   }
 
@@ -2068,7 +2246,7 @@ function BoardCanvas({
       >
         <section
           ref={boardRef}
-          className="free-board"
+          className={activeTool ? "free-board tool-active" : "free-board"}
           data-board-root="true"
           data-zoom={zoom}
           style={{
@@ -2096,6 +2274,8 @@ function BoardCanvas({
               onBoardContextMenu={onBoardContextMenu}
               onEdit={onEdit}
               onDelete={onDelete}
+              onTodoAdd={onTodoAdd}
+              onTodoToggle={onTodoToggle}
               onResize={onResize}
               onToggleCaption={onToggleCaption}
               onOpenLightbox={onOpenLightbox}
@@ -2103,6 +2283,22 @@ function BoardCanvas({
               onPointerDown={handleCardPointerDown}
             />
           ))}
+          <canvas
+            ref={toolCanvasRef}
+            className={activeTool ? "board-tool-canvas active" : "board-tool-canvas"}
+            style={{ width: BOARD_CANVAS_WIDTH, height: canvasHeight }}
+          />
+          {shapeDraft && (
+            <div
+              className={`shape-preview ${shapeDraft.tool}`}
+              style={{
+                left: Math.min(shapeDraft.start.x, shapeDraft.current.x),
+                top: Math.min(shapeDraft.start.y, shapeDraft.current.y),
+                width: Math.max(12, Math.abs(shapeDraft.current.x - shapeDraft.start.x)),
+                height: Math.max(12, Math.abs(shapeDraft.current.y - shapeDraft.start.y)),
+              }}
+            />
+          )}
           {selectionRect?.rect && (
             <div
               className="selection-box"
@@ -2134,6 +2330,8 @@ function FreeCard({
   onBoardContextMenu,
   onEdit,
   onDelete,
+  onTodoAdd,
+  onTodoToggle,
   onResize,
   onToggleCaption,
   onOpenLightbox,
@@ -2176,6 +2374,8 @@ function FreeCard({
         onBoardContextMenu={onBoardContextMenu}
         onEdit={onEdit}
         onDelete={onDelete}
+        onTodoAdd={onTodoAdd}
+        onTodoToggle={onTodoToggle}
         onResize={onResize}
         onToggleCaption={onToggleCaption}
         onOpenLightbox={onOpenLightbox}
@@ -2185,67 +2385,80 @@ function FreeCard({
   );
 }
 
-function LabelSidebar({ labels, selectedLabels, onToggle, onClear }) {
-  return (
-    <aside className="label-sidebar">
-      <div className="label-tab">Labels</div>
-      <div className="label-panel">
-        <div className="label-panel-title">ラベル</div>
-        {!labels.length && <p>このボードにはまだラベルがありません。</p>}
-        {labels.map((label) => (
-          <label className="label-check" key={label}>
-            <input
-              type="checkbox"
-              checked={selectedLabels.includes(label)}
-              onChange={() => onToggle(label)}
-            />
-            <span>{label}</span>
-          </label>
-        ))}
-        {!!selectedLabels.length && (
-          <button className="ghost" type="button" onClick={onClear}>
-            すべて表示
-          </button>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function ToolSidebar({ onPick }) {
-  const tools = [
-    { id: "note", label: "Note", icon: "📝" },
-    { id: "image", label: "Image", icon: "🖼" },
-    { id: "link", label: "Link", icon: "🔗" },
-    { id: "todo", label: "To-do", icon: "☑" },
-    { id: "comment", label: "Comment", icon: "💬" },
-    { id: "column", label: "Column", icon: "▤" },
-    { id: "table", label: "Table", icon: "▦" },
-    { id: "board", label: "Board", icon: "◫" },
-    { id: "shape-line", label: "Line", icon: "／" },
-    { id: "shape-rect", label: "Rect", icon: "▭" },
-    { id: "shape-circle", label: "Circle", icon: "◯" },
-    { id: "draw", label: "Draw", icon: "✎" },
+function BoardSidebar({ labels, selectedLabels, activeTool, onToggleLabel, onClearLabels, onPick }) {
+  const sections = [
+    {
+      title: "追加",
+      tools: [
+        { id: "note", label: "Note", icon: "📝" },
+        { id: "image", label: "Image", icon: "🖼" },
+        { id: "link", label: "Link", icon: "🔗" },
+        { id: "todo", label: "To-do", icon: "☑" },
+        { id: "comment", label: "Comment", icon: "💬" },
+        { id: "column", label: "Column", icon: "▤" },
+        { id: "table", label: "Table", icon: "▦" },
+        { id: "board", label: "Board", icon: "◫" },
+      ],
+    },
+    {
+      title: "図形",
+      tools: [
+        { id: "shape-line", label: "Line", icon: "／" },
+        { id: "shape-rect", label: "Rect", icon: "▭" },
+        { id: "shape-circle", label: "Circle", icon: "◯" },
+        { id: "draw", label: "Draw", icon: "✎" },
+      ],
+    },
   ];
 
   return (
-    <aside className="tool-sidebar">
-      {tools.map((tool) => (
-        <button
-          key={tool.id}
-          className="tool-button"
-          type="button"
-          draggable
-          onClick={() => onPick(tool.id)}
-          onDragStart={(event) => {
-            event.dataTransfer.effectAllowed = "copy";
-            event.dataTransfer.setData("application/x-keep-tool", tool.id);
-          }}
-        >
-          <span>{tool.icon}</span>
-          <small>{tool.label}</small>
-        </button>
-      ))}
+    <aside className="board-sidebar">
+      <div className="board-sidebar-tab">Tools</div>
+      <div className="board-sidebar-panel">
+        {sections.map((section) => (
+          <section className="sidebar-section" key={section.title}>
+            <div className="sidebar-title">{section.title}</div>
+            <div className="sidebar-tool-grid">
+              {section.tools.map((tool) => (
+                <button
+                  key={tool.id}
+                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
+                  type="button"
+                  draggable
+                  onClick={() => onPick(tool.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                  }}
+                >
+                  <span>{tool.icon}</span>
+                  <small>{tool.label}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+
+        <section className="sidebar-section">
+          <div className="sidebar-title">ラベル</div>
+          {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
+          {labels.map((label) => (
+            <label className="label-check" key={label}>
+              <input
+                type="checkbox"
+                checked={selectedLabels.includes(label)}
+                onChange={() => onToggleLabel(label)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+          {!!selectedLabels.length && (
+            <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
+              すべて表示
+            </button>
+          )}
+        </section>
+      </div>
     </aside>
   );
 }
@@ -2312,6 +2525,8 @@ function ItemCard({
   onBoardContextMenu,
   onEdit,
   onDelete,
+  onTodoAdd,
+  onTodoToggle,
   onResize,
   onToggleCaption,
   onOpenLightbox,
@@ -2416,11 +2631,27 @@ function ItemCard({
       <article className="card todo-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
         <div className="card-body">
           <div className="card-kicker">To-do</div>
-          <h2 className="card-title">{item.title || "To-do"}</h2>
+          <div className="todo-head">
+            <h2 className="card-title">{item.title || "To-do"}</h2>
+            <button
+              className="todo-add"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onTodoAdd(item.id);
+              }}
+            >
+              ＋
+            </button>
+          </div>
           <div className="todo-list">
             {lines.map((line, index) => (
               <label className="todo-row" key={`${item.id}-${index}`}>
-                <input type="checkbox" readOnly checked={line.trim().startsWith("[x]")} />
+                <input
+                  type="checkbox"
+                  checked={line.trim().startsWith("[x]")}
+                  onChange={() => onTodoToggle(item.id, index)}
+                />
                 <span>{line.replace(/^\[( |x)\]\s*/i, "").replace(/^・\s*/, "")}</span>
               </label>
             ))}
