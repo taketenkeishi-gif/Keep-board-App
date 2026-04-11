@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -79,8 +79,8 @@ function createInitialState() {
         id: createId("item"),
         boardId: firstBoardId,
         type: "note",
-        title: "メモを書く",
-        content: "追加ボタンからメモ、画像、リンク、サブボードを作れます。",
+        title: "メモを追加",
+        content: "追加ボタンからメモ、画像、リンク、サブボードを配置できます。",
         imagePath: "",
         url: "",
         linkedBoardId: "",
@@ -148,6 +148,44 @@ function readImageFile(file) {
   });
 }
 
+function probeMediaDimensions(source, type = "image") {
+  return new Promise((resolve) => {
+    if (!source) {
+      resolve({ width: 0, height: 0 });
+      return;
+    }
+
+    if (type === "video") {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.muted = true;
+      video.src = source;
+      video.onloadedmetadata = () => resolve({ width: video.videoWidth || 0, height: video.videoHeight || 0 });
+      video.onerror = () => resolve({ width: 0, height: 0 });
+      return;
+    }
+
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth || 0, height: image.naturalHeight || 0 });
+    image.onerror = () => resolve({ width: 0, height: 0 });
+    image.src = source;
+  });
+}
+
+function getAspectBasedCardSize(width, height, fallbackType) {
+  if (!width || !height) {
+    return {
+      widthUnits: fallbackType === "image" || fallbackType === "video" ? 4 : 2,
+      heightUnits: fallbackType === "image" || fallbackType === "video" ? 4 : 2,
+    };
+  }
+
+  const ratio = width / height;
+  const widthUnits = clamp(Math.round(clamp(ratio * 3.8, 3, 7)), MIN_CARD_SPAN, MAX_CARD_SPAN);
+  const heightUnits = clamp(Math.round(clamp(widthUnits / Math.max(ratio, 0.35), 3, 9)), MIN_CARD_ROWS, MAX_CARD_ROWS);
+  return { widthUnits, heightUnits };
+}
+
 export default function App() {
   const [state, setState] = useState(loadState);
   const [currentBoardId, setCurrentBoardId] = useState(null);
@@ -164,6 +202,9 @@ export default function App() {
   const [titleDraft, setTitleDraft] = useState("");
   const [selectedLabels, setSelectedLabels] = useState([]);
   const [selectedItemIds, setSelectedItemIds] = useState([]);
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+  const clipboardRef = useRef([]);
 
   const currentBoard = state.boards.find((board) => board.id === currentBoardId) || null;
   const rootBoards = useMemo(
@@ -195,6 +236,8 @@ export default function App() {
   );
   const lightboxIndex = visibleImages.findIndex((item) => item.id === lightboxId);
   const lightboxItem = lightboxIndex >= 0 ? visibleImages[lightboxIndex] : null;
+  const canUndo = undoStackRef.current.length > 0;
+  const canRedo = redoStackRef.current.length > 0;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -216,6 +259,53 @@ export default function App() {
     setActiveCaptionId(null);
   }, [currentBoardId]);
 
+  useEffect(() => {
+    function handleKeyDown(event) {
+      const target = event.target;
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (typing) return;
+
+      if (event.key === "Escape" && currentBoard) {
+        event.preventDefault();
+        setCurrentBoardId(currentBoard.parentBoardId || null);
+        setContextMenu(null);
+        setIsAddMenuOpen(false);
+        return;
+      }
+
+      if (!(event.ctrlKey || event.metaKey)) {
+        if ((event.key === "Delete" || event.key === "Backspace") && selectedItemIds.length) {
+          event.preventDefault();
+          deleteItemsByIds(selectedItemIds);
+        }
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undoState();
+      } else if (key === "y" || (key === "z" && event.shiftKey)) {
+        event.preventDefault();
+        redoState();
+      } else if (key === "d") {
+        event.preventDefault();
+        duplicateSelectedItems();
+      } else if (key === "x") {
+        event.preventDefault();
+        cutSelectedItems();
+      } else if (key === "v") {
+        event.preventDefault();
+        pasteClipboardItems();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [currentBoard, selectedItemIds, state]);
+
   const appShellStyle = buildSurfaceStyle(
     settings.appBackgroundMode,
     settings.appBackgroundColor,
@@ -229,8 +319,35 @@ export default function App() {
     "var(--glass)",
   );
 
-  function updateState(recipe) {
-    setState((previous) => save(recipe(previous)));
+  function updateState(recipe, options = { recordHistory: true }) {
+    setState((previous) => {
+      const next = recipe(previous);
+      if (next === previous) return previous;
+      if (options.recordHistory) {
+        undoStackRef.current.push(previous);
+        if (undoStackRef.current.length > 60) undoStackRef.current.shift();
+        redoStackRef.current = [];
+      }
+      return save(next);
+    });
+  }
+
+  function undoState() {
+    setState((previous) => {
+      const snapshot = undoStackRef.current.pop();
+      if (!snapshot) return previous;
+      redoStackRef.current.push(previous);
+      return save(snapshot);
+    });
+  }
+
+  function redoState() {
+    setState((previous) => {
+      const snapshot = redoStackRef.current.pop();
+      if (!snapshot) return previous;
+      undoStackRef.current.push(previous);
+      return save(snapshot);
+    });
   }
 
   function getDescendantBoardIds(boardId, boards = state.boards) {
@@ -332,6 +449,11 @@ export default function App() {
     const imagePath = values.imageFile?.size
       ? await readImageFile(values.imageFile)
       : item?.imagePath || "";
+    const dimensions =
+      type === "image" || type === "video"
+        ? await probeMediaDimensions(imagePath, type)
+        : { width: 0, height: 0 };
+    const mediaSize = getAspectBasedCardSize(dimensions.width, dimensions.height, type);
 
     updateState((previous) => {
       const record = {
@@ -340,6 +462,7 @@ export default function App() {
         label: values.label,
         imagePath,
         url: values.url,
+        ...(type === "image" || type === "video" ? mediaSize : {}),
         updatedAt: now(),
       };
 
@@ -372,7 +495,7 @@ export default function App() {
     });
   }
 
-  function addDroppedItem(item) {
+  function addDroppedItem(item, dropPosition = null) {
     const createdAt = now();
     updateState((previous) => ({
       ...previous,
@@ -384,6 +507,8 @@ export default function App() {
           linkedBoardId: "",
           widthUnits: item.widthUnits || (item.type === "image" || item.type === "video" ? 4 : 2),
           heightUnits: item.heightUnits || (item.type === "image" || item.type === "video" ? 4 : 2),
+          x: dropPosition?.x,
+          y: dropPosition?.y,
           order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length,
           createdAt,
           updatedAt: createdAt,
@@ -413,7 +538,6 @@ export default function App() {
   }
 
   function deleteItem(item) {
-    if (!confirm("このカードを削除しますか？")) return;
     if (item.type === "board") {
       deleteBoard(item.linkedBoardId, true);
       return;
@@ -574,6 +698,88 @@ export default function App() {
     }));
   }
 
+  function duplicateSelectedItems(itemIds = selectedItemIds) {
+    if (!currentBoardId || !itemIds.length) return;
+    updateState((previous) => {
+      const selected = previous.items
+        .filter((item) => item.boardId === currentBoardId && itemIds.includes(item.id) && item.type !== "board")
+        .map((item, index) => {
+          const position = clampPosition(item, { x: (item.x || 0) + 40, y: (item.y || 0) + 40 + index * 10 });
+          return {
+            ...item,
+            id: createId("item"),
+            x: position.x,
+            y: position.y,
+            createdAt: now(),
+            updatedAt: now(),
+            order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length + index,
+          };
+        });
+
+      if (!selected.length) return previous;
+      return {
+        ...previous,
+        items: [...previous.items, ...selected],
+      };
+    });
+  }
+
+  function deleteItemsByIds(itemIds) {
+    if (!itemIds.length) return;
+    updateState((previous) => {
+      const selectedIds = new Set(itemIds);
+      const boardIdsToDelete = new Set(
+        previous.items.filter((item) => selectedIds.has(item.id) && item.type === "board").map((item) => item.linkedBoardId),
+      );
+      const allBoardIds = new Set(
+        [...boardIdsToDelete].flatMap((boardId) => [boardId, ...getDescendantBoardIds(boardId, previous.boards)]),
+      );
+
+      return {
+        boards: previous.boards.filter((board) => !allBoardIds.has(board.id)),
+        items: previous.items.filter(
+          (item) => !selectedIds.has(item.id) && !allBoardIds.has(item.boardId) && !allBoardIds.has(item.linkedBoardId),
+        ),
+      };
+    });
+    setSelectedItemIds([]);
+  }
+
+  function cutSelectedItems() {
+    const selected = state.items
+      .filter((item) => item.boardId === currentBoardId && selectedItemIds.includes(item.id) && item.type !== "board")
+      .map((item) => ({ ...item }));
+    if (!selected.length) return;
+    const minX = Math.min(...selected.map((item) => item.x || 0));
+    const minY = Math.min(...selected.map((item) => item.y || 0));
+    clipboardRef.current = selected.map((item) => ({
+      ...item,
+      x: (item.x || 0) - minX,
+      y: (item.y || 0) - minY,
+    }));
+    deleteItemsByIds(selected.map((item) => item.id));
+  }
+
+  function pasteClipboardItems() {
+    if (!currentBoardId || !clipboardRef.current.length) return;
+    updateState((previous) => {
+      const pasted = clipboardRef.current.map((item, index) => ({
+        ...item,
+        id: createId("item"),
+        boardId: currentBoardId,
+        x: clampPosition(item, { x: 40 + (item.x || 0), y: 40 + (item.y || 0) + index * 8 }).x,
+        y: clampPosition(item, { x: 40 + (item.x || 0), y: 40 + (item.y || 0) + index * 8 }).y,
+        createdAt: now(),
+        updatedAt: now(),
+        order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length + index,
+      }));
+      return {
+        ...previous,
+        items: [...previous.items, ...pasted],
+      };
+    });
+  }
+
   function getBoardThumbnail(board) {
     if (board.thumbnailImage) return board.thumbnailImage;
     return state.items
@@ -628,9 +834,21 @@ export default function App() {
     event.preventDefault();
     setIsExternalDragOver(false);
 
-    const droppedItem = await createItemFromDrop(event.dataTransfer);
+    const boardRoot = document.querySelector("[data-board-root='true']");
+    const zoom = Number(boardRoot?.dataset.zoom || settings.boardZoom || 1);
+    const rect = boardRoot?.getBoundingClientRect();
+    const dropPosition =
+      rect && boardRoot
+        ? {
+            x: (event.clientX - rect.left) / zoom,
+            y: (event.clientY - rect.top) / zoom,
+          }
+        : null;
+
+    const droppedItem = await createDroppedVisualItem(event.dataTransfer);
     if (droppedItem) {
-      addDroppedItem(droppedItem);
+      const clampedPosition = dropPosition ? clampPosition(droppedItem, dropPosition) : null;
+      addDroppedItem(droppedItem, clampedPosition);
     }
   }
 
@@ -650,22 +868,42 @@ export default function App() {
         </button>
         <input
           className="search"
-          placeholder={currentBoard ? "サムネイルを検索" : "ボードを検索"}
+          placeholder={currentBoard ? "繧ｵ繝繝阪う繝ｫ繧呈､懃ｴ｢" : "繝懊・繝峨ｒ讀懃ｴ｢"}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <div className="top-actions">
-          {currentBoard && (
           <button
-            className="toolbar-button"
+            className="toolbar-button compact"
             type="button"
-            onClick={() => setCurrentBoardId(currentBoard.parentBoardId || null)}
-            title="一つ上の階層へ"
-            aria-label="一つ上の階層へ"
+            onClick={undoState}
+            title="元に戻す"
+            aria-label="元に戻す"
+            disabled={!canUndo}
           >
-            <span>←</span>
-            <b>戻る</b>
+            <span>↶</span>
           </button>
+          <button
+            className="toolbar-button compact"
+            type="button"
+            onClick={redoState}
+            title="やり直す"
+            aria-label="やり直す"
+            disabled={!canRedo}
+          >
+            <span>↷</span>
+          </button>
+          {currentBoard && (
+            <button
+              className="toolbar-button"
+              type="button"
+              onClick={() => setCurrentBoardId(currentBoard.parentBoardId || null)}
+              title="一つ上へ戻る"
+              aria-label="一つ上へ戻る"
+            >
+              <span>←</span>
+              <b>戻る</b>
+            </button>
           )}
           <button
             className="toolbar-button compact"
@@ -735,8 +973,8 @@ export default function App() {
                   className="toolbar-button accent board-add"
                   type="button"
                   onClick={() => setIsAddMenuOpen((value) => !value)}
-                  title="追加"
-                  aria-label="追加"
+                  title="カードを追加"
+                  aria-label="カードを追加"
                 >
                   <span>＋</span>
                   <b>カード</b>
@@ -795,14 +1033,14 @@ export default function App() {
               <p className="empty">{query ? "一致するカードがありません。" : "追加ボタンからカードを置けます。"}</p>
             )}
             <div className="drop-hint" aria-hidden={!isExternalDragOver}>
-              ここにドロップしてカード化
+              ここにドロップしてカードを追加
             </div>
           </>
         ) : (
           <>
             <section className="board-header">
               <div>
-                <h1 className="heading">ホーム</h1>
+                <h1 className="heading">繝帙・繝</h1>
               </div>
             </section>
             <SortableGrid ids={visibleRootBoards.map((board) => board.id)} sensors={sensors} onDragEnd={handleHomeDragEnd}>
@@ -885,8 +1123,24 @@ export default function App() {
         <ItemContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          item={contextMenu.item}
           onEdit={() => {
             setDialog({ kind: "item", type: contextMenu.item.type, item: contextMenu.item });
+            setContextMenu(null);
+          }}
+          onDuplicate={() => {
+            setContextMenu(null);
+            duplicateSelectedItems([contextMenu.item.id]);
+          }}
+          onDownload={() => {
+            const link = document.createElement("a");
+            link.href = contextMenu.item.imagePath || contextMenu.item.url || "#";
+            link.download = `${contextMenu.item.title || "card"}.${contextMenu.item.type === "video" ? "mp4" : "png"}`;
+            link.click();
+            setContextMenu(null);
+          }}
+          onOpenAsset={() => {
+            window.open(contextMenu.item.imagePath || contextMenu.item.url, "_blank", "noopener,noreferrer");
             setContextMenu(null);
           }}
           onDelete={() => {
@@ -1160,7 +1414,7 @@ async function createItemFromDrop(dataTransfer) {
     const type = file.type.startsWith("video/") ? "video" : "image";
     return {
       type,
-      title: file.name.replace(/\.[^.]+$/, "") || (type === "video" ? "ドロップ動画" : "ドロップ画像"),
+      title: file.name.replace(/\.[^.]+$/, "") || (type === "video" ? "動画" : "画像"),
       content: "",
       imagePath: await readImageFile(file),
       url: "",
@@ -1179,7 +1433,7 @@ async function createItemFromDrop(dataTransfer) {
   if (videoUrl) {
     return {
       type: "video",
-      title: titleFromUrl(videoUrl) || "ドロップ動画",
+      title: titleFromUrl(videoUrl) || "繝峨Ο繝・・蜍慕判",
       content: "",
       imagePath: videoUrl,
       url: videoUrl,
@@ -1191,7 +1445,7 @@ async function createItemFromDrop(dataTransfer) {
   if (imageUrl) {
     return {
       type: "image",
-      title: titleFromUrl(imageUrl) || "ドロップ画像",
+      title: titleFromUrl(imageUrl) || "画像",
       content: url && url !== imageUrl ? url : "",
       imagePath: imageUrl,
       url: imageUrl,
@@ -1203,7 +1457,7 @@ async function createItemFromDrop(dataTransfer) {
   if (url) {
     return {
       type: "link",
-      title: titleFromUrl(url) || "リンク",
+      title: titleFromUrl(url) || "繝ｪ繝ｳ繧ｯ",
       content: text && text !== url ? text : "",
       imagePath: "",
       url,
@@ -1215,7 +1469,7 @@ async function createItemFromDrop(dataTransfer) {
   if (text) {
     return {
       type: "note",
-      title: text.split(/\r?\n/)[0].slice(0, 60) || "ドロップメモ",
+      title: text.split(/\r?\n/)[0].slice(0, 60) || "繝峨Ο繝・・繝｡繝｢",
       content: text,
       imagePath: "",
       url: "",
@@ -1262,6 +1516,59 @@ function titleFromUrl(value) {
   } catch {
     return "";
   }
+}
+
+async function createDroppedVisualItem(dataTransfer) {
+  const file = Array.from(dataTransfer.files || []).find((candidate) =>
+    candidate.type.startsWith("image/") || candidate.type.startsWith("video/"),
+  );
+
+  if (file) {
+    const type = file.type.startsWith("video/") ? "video" : "image";
+    const imagePath = await readImageFile(file);
+    const dimensions = await probeMediaDimensions(imagePath, type);
+    return {
+      type,
+      title: file.name.replace(/\.[^.]+$/, "") || file.name,
+      content: "",
+      imagePath,
+      url: "",
+      ...getAspectBasedCardSize(dimensions.width, dimensions.height, type),
+    };
+  }
+
+  const html = dataTransfer.getData("text/html");
+  const uri = cleanDroppedUrl(dataTransfer.getData("text/uri-list"));
+  const text = dataTransfer.getData("text/plain").trim();
+  const imageUrl = getImageUrlFromHtml(html) || (isImageUrl(uri) ? uri : "");
+  const videoUrl = isVideoUrl(uri) ? uri : "";
+  const url = uri || extractFirstUrl(text) || extractFirstUrl(html);
+
+  if (videoUrl) {
+    const dimensions = await probeMediaDimensions(videoUrl, "video");
+    return {
+      type: "video",
+      title: titleFromUrl(videoUrl) || "Video",
+      content: "",
+      imagePath: videoUrl,
+      url: videoUrl,
+      ...getAspectBasedCardSize(dimensions.width, dimensions.height, "video"),
+    };
+  }
+
+  if (imageUrl) {
+    const dimensions = await probeMediaDimensions(imageUrl, "image");
+    return {
+      type: "image",
+      title: titleFromUrl(imageUrl) || "Image",
+      content: url && url !== imageUrl ? url : "",
+      imagePath: imageUrl,
+      url: imageUrl,
+      ...getAspectBasedCardSize(dimensions.width, dimensions.height, "image"),
+    };
+  }
+
+  return createItemFromDrop(dataTransfer);
 }
 
 function SortableGrid({ children, ids, onDragEnd, sensors }) {
@@ -1348,7 +1655,7 @@ function BoardCanvas({
         const viewport = viewportRef.current;
         if (!viewport) return;
         viewport.scrollLeft = panState.scrollLeft - (event.clientX - panState.startX);
-        viewport.scrollTop = panState.scrollTop - (event.clientY - panState.startY);
+        window.scrollTo({ top: Math.max(0, panState.scrollTop - (event.clientY - panState.startY)) });
         return;
       }
 
@@ -1443,7 +1750,7 @@ function BoardCanvas({
         startX: event.clientX,
         startY: event.clientY,
         scrollLeft: viewport.scrollLeft,
-        scrollTop: viewport.scrollTop,
+        scrollTop: window.scrollY,
       });
       return;
     }
@@ -1478,7 +1785,7 @@ function BoardCanvas({
     onZoomChange(nextZoom);
     requestAnimationFrame(() => {
       viewport.scrollLeft = contentX * nextZoom - pointerX;
-      viewport.scrollTop = contentY * nextZoom - pointerY;
+      window.scrollTo({ top: contentY * nextZoom - pointerY });
     });
   }
 
@@ -1534,6 +1841,8 @@ function BoardCanvas({
         <section
           ref={boardRef}
           className="free-board"
+          data-board-root="true"
+          data-zoom={zoom}
           style={{
             width: BOARD_CANVAS_WIDTH,
             minHeight: canvasHeight,
@@ -1615,6 +1924,7 @@ function FreeCard({
         width: size.width,
         height: size.height,
       }}
+      onDragStart={(event) => event.preventDefault()}
       onPointerDown={(event) => onPointerDown(event, item)}
       onDoubleClick={() => {
         if (item.type === "image" || item.type === "video") onOpenLightbox(item.id);
@@ -1645,7 +1955,7 @@ function LabelSidebar({ labels, selectedLabels, onToggle, onClear }) {
       <div className="label-tab">Labels</div>
       <div className="label-panel">
         <div className="label-panel-title">ラベル</div>
-        {!labels.length && <p>ラベルはまだありません。</p>}
+        {!labels.length && <p>このボードにはまだラベルがありません。</p>}
         {labels.map((label) => (
           <label className="label-check" key={label}>
             <input
@@ -1668,9 +1978,9 @@ function LabelSidebar({ labels, selectedLabels, onToggle, onClear }) {
 
 function Breadcrumbs({ path, onHome, onMove }) {
   return (
-    <nav className="crumbs" aria-label="パンくず">
+    <nav className="crumbs" aria-label="繝代Φ縺上★">
       <button className="crumb" type="button" onClick={onHome}>
-        ホーム
+        繝帙・繝
       </button>
       {path.map((board, index) => (
         <span className="crumb-group" key={board.id}>
@@ -1769,6 +2079,7 @@ function ItemCard({
         onClick={() => onToggleCaption(isCaptionVisible ? null : item.id)}
         onDoubleClick={() => onOpenLightbox(item.id)}
         onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDragStart={(event) => event.preventDefault()}
       >
         <div className="media-frame">
           <img src={item.imagePath} alt={item.title || "画像カード"} draggable="false" />
@@ -1790,6 +2101,7 @@ function ItemCard({
         onClick={() => onToggleCaption(isCaptionVisible ? null : item.id)}
         onDoubleClick={() => onOpenLightbox(item.id)}
         onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDragStart={(event) => event.preventDefault()}
       >
         <div className="media-frame">
           <video src={item.imagePath} controls muted preload="metadata" draggable="false" />
@@ -1855,8 +2167,8 @@ function ResizeHandle({ item, onResize }) {
       className="resize-handle"
       type="button"
       onPointerDown={handlePointerDown}
-      title="画像サイズを調節"
-      aria-label="画像サイズを調節"
+      title="逕ｻ蜒上し繧､繧ｺ繧定ｪｿ遽"
+      aria-label="逕ｻ蜒上し繧､繧ｺ繧定ｪｿ遽"
     />
   );
 }
@@ -1865,10 +2177,9 @@ function CardActions({ onEdit, onDelete }) {
   return (
     <div className="card-actions" onClick={(event) => event.stopPropagation()}>
       <button className="ghost" type="button" onClick={onEdit}>
-        編集
-      </button>
+        邱ｨ髮・      </button>
       <button className="ghost danger" type="button" onClick={onDelete}>
-        削除
+        蜑企勁
       </button>
     </div>
   );
@@ -1900,7 +2211,7 @@ function BoardDialog({ board, onClose, onSave }) {
           });
         }}
       >
-        <h2>{board ? "ボード編集" : "ボード作成"}</h2>
+        <h2>{board ? "ボードを編集" : "ボードを作成"}</h2>
         <label className="field">
           <span>タイトル</span>
           <input value={title} onChange={(event) => setTitle(event.target.value)} required autoFocus />
@@ -1913,8 +2224,8 @@ function BoardDialog({ board, onClose, onSave }) {
           <span>タイトルの太さ</span>
           <select value={fontWeight} onChange={(event) => setFontWeight(event.target.value)}>
             <option value="500">標準</option>
-            <option value="700">太め</option>
-            <option value="900">かなり太め</option>
+            <option value="700">太字</option>
+            <option value="900">極太</option>
           </select>
         </label>
         <label className="field">
@@ -1925,7 +2236,7 @@ function BoardDialog({ board, onClose, onSave }) {
           <div className="thumb-preview">
             <img src={thumbnailImage} alt="" />
             <button className="ghost" type="button" onClick={() => setThumbnailImage("")}>
-              初期サムネに戻す
+              サムネイルを削除
             </button>
           </div>
         )}
@@ -1957,7 +2268,7 @@ function ItemDialog({ item, type, onClose, onSave }) {
           });
         }}
       >
-        <h2>{itemLabels[type]}{item ? "編集" : "作成"}</h2>
+        <h2>{item ? `${itemLabels[type]}を編集` : `${itemLabels[type]}を作成`}</h2>
         <label className="field">
           <span>タイトル</span>
           <input value={title} onChange={(event) => setTitle(event.target.value)} required autoFocus />
@@ -1968,7 +2279,7 @@ function ItemDialog({ item, type, onClose, onSave }) {
         </label>
         <label className="field">
           <span>ラベル</span>
-          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="例: 参考 / 背景 / キャラ" />
+          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="例: お気に入り / 資料 / キャラ" />
         </label>
         {type === "link" && (
           <label className="field">
@@ -2012,11 +2323,10 @@ function DialogActions({ onClose }) {
   return (
     <div className="dialog-actions">
       <button className="secondary" type="button" onClick={onClose}>
-        キャンセル
+        繧ｭ繝｣繝ｳ繧ｻ繝ｫ
       </button>
       <button className="primary" type="submit">
-        保存
-      </button>
+        菫晏ｭ・      </button>
     </div>
   );
 }
@@ -2025,20 +2335,37 @@ function BoardContextMenu({ x, y, onEdit, onDelete }) {
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
       <button type="button" onClick={onEdit}>
-        ボードを編集
-      </button>
+        繝懊・繝峨ｒ邱ｨ髮・      </button>
       <button className="danger" type="button" onClick={onDelete}>
-        ボードを削除
+        繝懊・繝峨ｒ蜑企勁
       </button>
     </div>
   );
 }
 
-function ItemContextMenu({ x, y, onEdit, onDelete }) {
+function ItemContextMenu({ x, y, item, onEdit, onDuplicate, onDownload, onOpenAsset, onDelete }) {
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
-      <button type="button" onClick={onEdit}>
-        カードを編集
+      {(item.type === "image" || item.type === "video") && (
+        <>
+          <button type="button" onClick={onOpenAsset}>
+            画像を開く
+          </button>
+          <button type="button" onClick={onDownload}>
+            画像をダウンロード
+          </button>
+          <button type="button" onClick={onEdit}>
+            画像を置換 / 編集
+          </button>
+        </>
+      )}
+      {item.type !== "image" && item.type !== "video" && (
+        <button type="button" onClick={onEdit}>
+          カードを編集
+        </button>
+      )}
+      <button type="button" onClick={onDuplicate}>
+        複製
       </button>
       <button className="danger" type="button" onClick={onDelete}>
         カードを削除
@@ -2062,7 +2389,7 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
   return (
     <Dialog onClose={onClose}>
       <form
-        onSubmit={async (event) => {
+        onSubmit={(event) => {
           event.preventDefault();
           onSave(draft, draftTheme);
         }}
@@ -2087,10 +2414,7 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
         </label>
         <label className="field">
           <span>ソート</span>
-          <select
-            value={draft.sortMode}
-            onChange={(event) => setDraft({ ...draft, sortMode: event.target.value })}
-          >
+          <select value={draft.sortMode} onChange={(event) => setDraft({ ...draft, sortMode: event.target.value })}>
             <option value="manual">手動順</option>
             <option value="newest">追加順 新しい順</option>
             <option value="oldest">追加順 古い順</option>
@@ -2176,12 +2500,21 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
 
 function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
   const [isZoomed, setIsZoomed] = useState(false);
+  const [showChrome, setShowChrome] = useState(true);
+  const hideTimerRef = useRef(null);
+
+  function pingChrome() {
+    setShowChrome(true);
+    window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = window.setTimeout(() => setShowChrome(false), 1400);
+  }
 
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.key === "Escape") onClose();
       if (event.key === "ArrowLeft" && hasPrevious) onPrevious();
       if (event.key === "ArrowRight" && hasNext) onNext();
+      pingChrome();
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -2190,10 +2523,20 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
 
   useEffect(() => {
     setIsZoomed(false);
+    pingChrome();
   }, [item.id]);
 
+  useEffect(() => () => window.clearTimeout(hideTimerRef.current), []);
+
   return (
-    <div className={isZoomed ? "lightbox zoomed" : "lightbox"} role="dialog" aria-modal="true" onClick={onClose}>
+    <div
+      className={`${isZoomed ? "lightbox zoomed" : "lightbox"} ${showChrome ? "chrome-visible" : "chrome-hidden"}`}
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      onMouseMove={pingChrome}
+      onPointerDown={pingChrome}
+    >
       <button className="lightbox-close" type="button" onClick={onClose} aria-label="閉じる">
         ×
       </button>
@@ -2202,6 +2545,7 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
         type="button"
         onClick={(event) => {
           event.stopPropagation();
+          pingChrome();
           onPrevious();
         }}
         disabled={!hasPrevious}
@@ -2212,7 +2556,10 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
       <figure
         className="lightbox-figure"
         onClick={(event) => event.stopPropagation()}
-        onDoubleClick={() => setIsZoomed((value) => !value)}
+        onDoubleClick={() => {
+          pingChrome();
+          setIsZoomed((value) => !value);
+        }}
       >
         {item.type === "video" ? (
           <video src={item.imagePath} controls autoPlay />
@@ -2230,6 +2577,7 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
         type="button"
         onClick={(event) => {
           event.stopPropagation();
+          pingChrome();
           onNext();
         }}
         disabled={!hasNext}
@@ -2240,3 +2588,4 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
     </div>
   );
 }
+
