@@ -754,9 +754,11 @@ button {
 .board-sidebar-panel {
   position: relative;
   z-index: 1;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   height: 100%;
+  align-content: flex-start;
   padding: 12px 40px 12px 10px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
@@ -1129,13 +1131,13 @@ button {
 
 .inline-title-form input {
   width: min(620px, 80vw);
-  padding: 8px 0;
+  padding: 0;
   border: 0;
-  border-bottom: 2px solid var(--accent);
   background: transparent;
   color: var(--ink);
   font-size: clamp(26px, 4vw, 42px);
   font-weight: 900;
+  line-height: 1.08;
   outline: none;
 }
 
@@ -1146,7 +1148,7 @@ button {
 .lightbox {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 90;
   display: grid;
   grid-template-columns: 86px 1fr 86px;
   align-items: center;
@@ -1349,6 +1351,10 @@ button {
   min-width: 140px;
 }
 
+.draw-field.compact {
+  min-width: 120px;
+}
+
 .draw-field input[type="color"] {
   width: 44px;
   height: 34px;
@@ -1367,6 +1373,7 @@ button {
   position: absolute;
   inset: 0;
   z-index: 3;
+  pointer-events: none;
 }
 
 .annotation-text {

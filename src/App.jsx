@@ -4015,6 +4015,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   const [textAnnotations, setTextAnnotations] = useState([]);
   const [activeTextId, setActiveTextId] = useState(null);
   const [wrapSize, setWrapSize] = useState({ width: 900, height: 520 });
+  const activeText = textAnnotations.find((annotation) => annotation.id === activeTextId) || null;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -4083,6 +4084,44 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     );
   }
 
+  function addTextAnnotationAtPoint(point, initialText = "Text") {
+    const annotationId = createId("annotext");
+    setTextAnnotations((previous) => [
+      ...previous,
+      {
+        id: annotationId,
+        text: initialText,
+        x: clamp(Math.round(point.x), 0, 900),
+        y: clamp(Math.round(point.y), 0, 520),
+        fontSize: Math.max(14, brushSize * 4),
+        color: brushColor,
+        angleDeg: 0,
+      },
+    ]);
+    setActiveTextId(annotationId);
+  }
+
+  function removeActiveTextAnnotation() {
+    if (!activeTextId) return;
+    setTextAnnotations((previous) => previous.filter((annotation) => annotation.id !== activeTextId));
+    setActiveTextId(null);
+  }
+
+  function duplicateActiveTextAnnotation() {
+    if (!activeText) return;
+    const duplicateId = createId("annotext");
+    setTextAnnotations((previous) => [
+      ...previous,
+      {
+        ...activeText,
+        id: duplicateId,
+        x: clamp((activeText.x || 0) + 18, 0, 900),
+        y: clamp((activeText.y || 0) + 18, 0, 520),
+      },
+    ]);
+    setActiveTextId(duplicateId);
+  }
+
   function getPoint(event) {
     const rect = canvasRef.current.getBoundingClientRect();
     return {
@@ -4140,19 +4179,6 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     const point = getPoint(event);
     if (mode === "annotate") {
       if (annotateTool === "text") {
-        const annotationId = createId("annotext");
-        setTextAnnotations((previous) => [
-          ...previous,
-          {
-            id: annotationId,
-            text: "Text",
-            x: clamp(Math.round(point.x), 0, 900),
-            y: clamp(Math.round(point.y), 0, 520),
-            fontSize: Math.max(14, brushSize * 4),
-            color: brushColor,
-          },
-        ]);
-        setActiveTextId(annotationId);
         return;
       }
       const context = canvasRef.current.getContext("2d");
@@ -4193,6 +4219,20 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     cropDraftRef.current = null;
   }
 
+  function handleAnnotationWrapDoubleClick(event) {
+    if (mode !== "annotate" || annotateTool !== "text") return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.closest(".annotation-text")) return;
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const point = {
+      x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 900,
+      y: ((event.clientY - rect.top) / Math.max(rect.height, 1)) * 520,
+    };
+    addTextAnnotationAtPoint(point, "");
+  }
+
   function handleSave(event) {
     event.preventDefault();
     if (mode === "annotate") {
@@ -4204,7 +4244,11 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
         context.fillStyle = annotation.color || brushColor;
         context.font = `${annotation.fontSize || 18}px "Segoe UI", sans-serif`;
         context.textBaseline = "top";
-        context.fillText(annotation.text, annotation.x || 0, annotation.y || 0);
+        context.save();
+        context.translate(annotation.x || 0, annotation.y || 0);
+        context.rotate((((annotation.angleDeg || 0) * Math.PI) / 180) || 0);
+        context.fillText(annotation.text, 0, 0);
+        context.restore();
       }
       onSave(canvas.toDataURL("image/png"));
       return;
@@ -4229,6 +4273,24 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     };
     image.src = item.imagePath;
   }
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      const target = event.target;
+      const editingInput = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+      if ((event.key === "Delete" || event.key === "Backspace") && activeTextId && !editingInput) {
+        event.preventDefault();
+        removeActiveTextAnnotation();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d" && activeTextId) {
+        event.preventDefault();
+        duplicateActiveTextAnnotation();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTextId, activeText]);
 
   return (
     <Dialog onClose={onClose}>
@@ -4289,6 +4351,27 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             >
               文字
             </button>
+            {annotateTool === "text" && (
+              <>
+                <button className="secondary" type="button" onClick={duplicateActiveTextAnnotation} disabled={!activeText}>
+                  複製
+                </button>
+                <button className="secondary" type="button" onClick={removeActiveTextAnnotation} disabled={!activeText}>
+                  削除
+                </button>
+                <label className="field draw-field compact">
+                  <span>角度</span>
+                  <input
+                    type="range"
+                    min="-180"
+                    max="180"
+                    value={activeText?.angleDeg || 0}
+                    onChange={(event) => activeText && updateAnnotation(activeText.id, { angleDeg: Number(event.target.value) })}
+                    disabled={!activeText}
+                  />
+                </label>
+              </>
+            )}
             <button
               className="secondary"
               type="button"
@@ -4307,7 +4390,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             </button>
           </div>
         )}
-        <div className="image-edit-wrap" ref={wrapRef}>
+        <div className="image-edit-wrap" ref={wrapRef} onDoubleClick={handleAnnotationWrapDoubleClick}>
           <canvas
             ref={canvasRef}
             className={mode === "crop" ? "draw-canvas crop-canvas" : "draw-canvas"}
@@ -4319,7 +4402,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             onPointerLeave={endPointer}
           />
           {mode === "annotate" && (
-            <div className="annotation-layer" onPointerDown={() => setActiveTextId(null)}>
+            <div className="annotation-layer">
               {textAnnotations.map((annotation) => {
                 const scaleX = wrapSize.width / 900;
                 const scaleY = wrapSize.height / 520;
@@ -4336,6 +4419,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
                       top,
                       color: annotation.color || "#ffffff",
                       fontSize,
+                      transform: `rotate(${annotation.angleDeg || 0}deg)`,
+                      transformOrigin: "left top",
                     }}
                     onPointerDown={(event) => beginTextTransform(event, annotation, "move")}
                   >
