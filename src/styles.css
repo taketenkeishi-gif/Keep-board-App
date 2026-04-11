@@ -155,10 +155,10 @@ button {
   gap: 8px;
   align-items: center;
   padding: 4px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 74%, transparent);
-  box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--surface) 88%, #10141a 12%);
+  box-shadow: 0 10px 26px rgba(14, 19, 26, 0.24);
   backdrop-filter: blur(14px);
 }
 
@@ -169,9 +169,9 @@ button {
   justify-content: center;
   gap: 8px;
   padding: 0 14px;
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
   border-radius: 8px;
-  background: transparent;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
   color: var(--ink);
   font-weight: 800;
   transition:
@@ -196,7 +196,7 @@ button {
 }
 
 .toolbar-button:hover {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
   transform: translateY(-1px);
 }
 
@@ -375,26 +375,99 @@ button {
 }
 
 .draw-toolbar-board {
-  position: sticky;
-  top: 14px;
-  z-index: 12;
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 56;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  width: fit-content;
-  max-width: calc(100% - 24px);
-  margin: 12px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
+  width: min(720px, calc(100vw - 56px));
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 90%, #0c1118 10%);
+  box-shadow: 0 18px 42px rgba(8, 12, 17, 0.34);
+  backdrop-filter: blur(14px);
 }
 
 .draw-toolbar-board .field {
   margin: 0;
+}
+
+.draw-mode-btn {
+  min-width: 68px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.draw-mode-btn.active {
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.draw-color-field {
+  min-width: 68px;
+}
+
+.draw-color-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+}
+
+.draw-color-swatch {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 6px;
+}
+
+.draw-color-native {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.draw-mini-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 80%, #131922 20%);
+  color: color-mix(in srgb, var(--ink) 92%, white 8%);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.draw-mini-btn:disabled {
+  opacity: 0.46;
+}
+
+.draw-save-btn {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-dark) 66%, transparent);
+  border-radius: 9px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, white 12%), var(--accent-dark));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .shape-preview {
@@ -788,10 +861,10 @@ button {
   align-content: flex-start;
   padding: 10px 34px 10px 8px;
   overflow-y: auto;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
   border-radius: 0 8px 8px 0;
-  background: color-mix(in srgb, var(--surface) 84%, transparent);
-  box-shadow: var(--shadow-strong);
+  background: color-mix(in srgb, var(--surface) 90%, #0d1117 10%);
+  box-shadow: 0 18px 46px rgba(10, 14, 20, 0.34);
   backdrop-filter: blur(18px);
   scrollbar-width: none;
 }
@@ -831,15 +904,15 @@ button {
   justify-content: flex-start;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
   border-radius: 8px;
-  background: transparent;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
   color: var(--ink);
   text-align: left;
 }
 
 .tool-button:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .tool-button.active {
@@ -1290,6 +1363,8 @@ button {
 
 .lightbox.zoomed .lightbox-figure {
   position: fixed;
+  inset: 0;
+  margin: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1491,6 +1566,13 @@ button {
   .lightbox {
     grid-template-columns: 54px 1fr 54px;
     padding: 14px;
+  }
+
+  .draw-toolbar-board {
+    right: 10px;
+    bottom: 12px;
+    width: calc(100vw - 20px);
+    padding: 10px;
   }
 }
 

@@ -2086,6 +2086,7 @@ function BoardCanvas({
   const viewportRef = useRef(null);
   const boardRef = useRef(null);
   const toolCanvasRef = useRef(null);
+  const drawColorInputRef = useRef(null);
   const drawDraftRef = useRef(null);
   const dragFrameRef = useRef(0);
   const [selectionRect, setSelectionRect] = useState(null);
@@ -2573,25 +2574,34 @@ function BoardCanvas({
         {activeTool === "draw" && (
           <div className="draw-toolbar-board" onPointerDown={(event) => event.stopPropagation()}>
             <button
-              className={drawTool === "pen" ? "tool-button compact active" : "tool-button compact"}
+              className={drawTool === "pen" ? "draw-mode-btn active" : "draw-mode-btn"}
               type="button"
               onClick={() => setDrawTool("pen")}
             >
               ペン
             </button>
             <button
-              className={drawTool === "eraser" ? "tool-button compact active" : "tool-button compact"}
+              className={drawTool === "eraser" ? "draw-mode-btn active" : "draw-mode-btn"}
               type="button"
               onClick={() => setDrawTool("eraser")}
             >
               消しゴム
             </button>
-            <label className="field draw-field compact">
+            <label className="field draw-field compact draw-color-field">
               <span>色</span>
+              <button
+                className="draw-color-button"
+                type="button"
+                onClick={() => drawColorInputRef.current?.click()}
+                aria-label="色を選択"
+              >
+                <span className="draw-color-swatch" style={{ background: drawColor }} />
+              </button>
               <input
+                ref={drawColorInputRef}
+                className="draw-color-native"
                 type="color"
                 value={drawColor}
-                disabled={drawTool === "eraser"}
                 onChange={(event) => setDrawColor(event.target.value)}
               />
             </label>
@@ -2605,16 +2615,16 @@ function BoardCanvas({
                 onChange={(event) => setDrawSize(Number(event.target.value))}
               />
             </label>
-            <button className="secondary" type="button" onClick={handleDrawUndo} disabled={!drawStrokes.length}>
+            <button className="draw-mini-btn" type="button" onClick={handleDrawUndo} disabled={!drawStrokes.length}>
               Undo
             </button>
-            <button className="secondary" type="button" onClick={handleDrawRedo} disabled={!drawRedoStrokes.length}>
+            <button className="draw-mini-btn" type="button" onClick={handleDrawRedo} disabled={!drawRedoStrokes.length}>
               Redo
             </button>
-            <button className="secondary" type="button" onClick={handleDrawDiscard}>
+            <button className="draw-mini-btn" type="button" onClick={handleDrawDiscard}>
               Discard
             </button>
-            <button className="primary" type="button" onClick={handleDrawSave}>
+            <button className="draw-save-btn" type="button" onClick={handleDrawSave}>
               Save
             </button>
           </div>
@@ -4638,8 +4648,6 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
     return {
       width,
       height,
-      left: (viewportWidth - width) / 2,
-      top: (viewportHeight - height) / 2,
     };
   }, [mediaNaturalSize.height, mediaNaturalSize.width, viewportSize.height, viewportSize.width]);
 
@@ -4715,8 +4723,6 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
             ? {
                 width: `${zoomMetrics.width}px`,
                 height: `${zoomMetrics.height}px`,
-                left: `${zoomMetrics.left}px`,
-                top: `${zoomMetrics.top}px`,
               }
             : undefined
         }
