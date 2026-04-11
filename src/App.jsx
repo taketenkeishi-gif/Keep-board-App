@@ -1282,7 +1282,7 @@ export default function App() {
                 }
                 if (tool === "draw" || tool.startsWith("shape-")) {
                   if (tool === "draw") {
-                    setDialog({ kind: "drawEdit", item: null, position: { x: 120, y: 120 } });
+                    setActiveTool((current) => (current === "draw" ? null : "draw"));
                     return;
                   }
                   setActiveTool((current) => (current === tool ? null : tool));
@@ -1334,7 +1334,7 @@ export default function App() {
                     createQuickItem("draw", position, overrides);
                     return;
                   }
-                  setDialog({ kind: "drawEdit", item: null, position: position || { x: 120, y: 120 } });
+                  setActiveTool("draw");
                   return;
                 }
                 if (tool === "image" || tool === "video") {
@@ -2383,7 +2383,15 @@ function BoardCanvas({
   }
 
   function handleWheel(event) {
-    if (!event.ctrlKey) return;
+    if (!event.ctrlKey) {
+      event.preventDefault();
+      const viewport = viewportRef.current;
+      if (viewport && event.deltaX) {
+        viewport.scrollLeft += event.deltaX;
+      }
+      window.scrollBy({ top: event.deltaY, behavior: "auto" });
+      return;
+    }
     event.preventDefault();
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -2682,12 +2690,13 @@ function BoardSidebar({
     }
     return b.count - a.count || a.label.localeCompare(b.label, "ja");
   });
+  const hasContextPanel = Boolean(selectedImageItem || selectedTextItem || selectedItem?.sticker);
 
   return (
     <aside className="board-sidebar">
       <div className="board-sidebar-tab">Tools</div>
       <div className="board-sidebar-panel">
-        {!selectedImageItem && !selectedTextItem && (
+        {!hasContextPanel && (
           <section className="sidebar-section">
             <div className="sidebar-title">メニュー</div>
             <div className="sidebar-root-grid">
@@ -2707,7 +2716,7 @@ function BoardSidebar({
           </section>
         )}
 
-        {!selectedImageItem && !selectedTextItem && showAddPanel && (
+        {!hasContextPanel && showAddPanel && (
           <section className="sidebar-section">
             <div className="sidebar-title">カード追加</div>
             <div className="sidebar-tool-grid">
@@ -2732,7 +2741,7 @@ function BoardSidebar({
           </section>
         )}
 
-        {!selectedImageItem && !selectedTextItem && showShapePanel && (
+        {!hasContextPanel && showShapePanel && (
           <section className="sidebar-section">
             <div className="sidebar-title">図形追加</div>
             <div className="sidebar-tool-grid">
@@ -2873,7 +2882,7 @@ function BoardSidebar({
           </section>
         )}
 
-        {!selectedImageItem && !selectedTextItem && (
+        {!hasContextPanel && (
           <section className="sidebar-section">
             <div className="sidebar-title">ラベル</div>
             <button className="ghost sidebar-toggle" type="button" onClick={onToggleLabelPanel}>
