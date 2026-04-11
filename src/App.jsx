@@ -217,6 +217,7 @@ export default function App() {
   const [titleDraft, setTitleDraft] = useState("");
   const [selectedLabels, setSelectedLabels] = useState([]);
   const [selectedItemIds, setSelectedItemIds] = useState([]);
+  const mediaReplaceRef = useRef({ itemId: null });
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
   const clipboardRef = useRef([]);
@@ -498,6 +499,20 @@ export default function App() {
     }));
   }
 
+  function openMediaReplacePicker(item) {
+    mediaReplaceRef.current = { itemId: item.id };
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*,video/*";
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (file && mediaReplaceRef.current.itemId) {
+        await replaceMediaAsset(mediaReplaceRef.current.itemId, file);
+      }
+    });
+    input.click();
+  }
+
   async function saveItem(type, values, item = null) {
     const createdAt = now();
     const imagePath = values.imageFile?.size
@@ -753,6 +768,31 @@ export default function App() {
     }));
   }
 
+  async function replaceMediaAsset(itemId, file) {
+    if (!file) return;
+    const type = file.type.startsWith("video/") ? "video" : "image";
+    const imagePath = await readImageFile(file);
+    const dimensions = await probeMediaDimensions(imagePath, type);
+    const mediaSize = getAspectBasedCardSize(dimensions.width, dimensions.height, type);
+
+    updateState((previous) => ({
+      ...previous,
+      items: previous.items.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              type,
+              imagePath,
+              aspectRatio: mediaSize.aspectRatio,
+              widthUnits: mediaSize.widthUnits,
+              heightUnits: mediaSize.heightUnits,
+              updatedAt: now(),
+            }
+          : item,
+      ),
+    }));
+  }
+
   function duplicateSelectedItems(itemIds = selectedItemIds) {
     if (!currentBoardId || !itemIds.length) return;
     updateState((previous) => {
@@ -923,7 +963,7 @@ export default function App() {
         </button>
         <input
           className="search"
-          placeholder={currentBoard ? "繧ｵ繝繝阪う繝ｫ繧呈､懃ｴ｢" : "繝懊・繝峨ｒ讀懃ｴ｢"}
+          placeholder={currentBoard ? "サムネイルを検索" : "ボードを検索"}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -1123,7 +1163,7 @@ export default function App() {
           <>
             <section className="board-header">
               <div>
-                <h1 className="heading">繝帙・繝</h1>
+                <h1 className="heading">ホーム</h1>
               </div>
             </section>
             <SortableGrid ids={visibleRootBoards.map((board) => board.id)} sensors={sensors} onDragEnd={handleHomeDragEnd}>
@@ -1258,6 +1298,10 @@ export default function App() {
           }}
           onOpenAsset={() => {
             window.open(contextMenu.item.imagePath || contextMenu.item.url, "_blank", "noopener,noreferrer");
+            setContextMenu(null);
+          }}
+          onReplace={() => {
+            openMediaReplacePicker(contextMenu.item);
             setContextMenu(null);
           }}
           onDelete={() => {
@@ -1618,7 +1662,7 @@ async function createItemFromDrop(dataTransfer) {
   if (url) {
     return {
       type: "link",
-      title: titleFromUrl(url) || "繝ｪ繝ｳ繧ｯ",
+      title: titleFromUrl(url) || "リンク",
       content: text && text !== url ? text : "",
       imagePath: "",
       url,
@@ -2171,6 +2215,7 @@ function LabelSidebar({ labels, selectedLabels, onToggle, onClear }) {
 function ToolSidebar({ onPick }) {
   const tools = [
     { id: "note", label: "Note", icon: "📝" },
+    { id: "image", label: "Image", icon: "🖼" },
     { id: "link", label: "Link", icon: "🔗" },
     { id: "todo", label: "To-do", icon: "☑" },
     { id: "comment", label: "Comment", icon: "💬" },
@@ -2207,9 +2252,9 @@ function ToolSidebar({ onPick }) {
 
 function Breadcrumbs({ path, onHome, onMove }) {
   return (
-    <nav className="crumbs" aria-label="繝代Φ縺上★">
+    <nav className="crumbs" aria-label="パンくず">
       <button className="crumb" type="button" onClick={onHome}>
-        繝帙・繝
+        ホーム
       </button>
       {path.map((board, index) => (
         <span className="crumb-group" key={board.id}>
@@ -2345,6 +2390,95 @@ function ItemCard({
     );
   }
 
+  if (item.type === "draw" && item.imagePath) {
+    return (
+      <article className="card sticker-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <img className="sticker-image" src={item.imagePath} alt={item.title || "Draw sticker"} draggable="false" />
+      </article>
+    );
+  }
+
+  if (item.type === "shape-line") {
+    return <article className="card sticker-card sticker-line" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+  }
+
+  if (item.type === "shape-rect") {
+    return <article className="card sticker-card sticker-rect" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+  }
+
+  if (item.type === "shape-circle") {
+    return <article className="card sticker-card sticker-circle" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+  }
+
+  if (item.type === "todo") {
+    const lines = (item.content || "・やること").split(/\r?\n/).filter(Boolean);
+    return (
+      <article className="card todo-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <div className="card-body">
+          <div className="card-kicker">To-do</div>
+          <h2 className="card-title">{item.title || "To-do"}</h2>
+          <div className="todo-list">
+            {lines.map((line, index) => (
+              <label className="todo-row" key={`${item.id}-${index}`}>
+                <input type="checkbox" readOnly checked={line.trim().startsWith("[x]")} />
+                <span>{line.replace(/^\[( |x)\]\s*/i, "").replace(/^・\s*/, "")}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  if (item.type === "comment") {
+    return (
+      <article className="card comment-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <div className="card-body">
+          <div className="card-kicker">Comment</div>
+          <p className="card-content">{item.content || "コメントを書く"}</p>
+        </div>
+      </article>
+    );
+  }
+
+  if (item.type === "column") {
+    const [headline, ...bodyLines] = (item.content || "").split(/\r?\n/);
+    return (
+      <article className="card column-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <div className="card-body">
+          <div className="card-kicker">Column</div>
+          <h2 className="card-title">{item.title || "Column"}</h2>
+          {headline && <p className="column-headline">{headline}</p>}
+          {bodyLines.length > 0 && <p className="card-content">{bodyLines.join("\n")}</p>}
+        </div>
+      </article>
+    );
+  }
+
+  if (item.type === "table") {
+    const rows = (item.content || "")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => line.split("|").map((cell) => cell.trim()));
+    return (
+      <article className="card table-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <div className="card-body">
+          <div className="card-kicker">Table</div>
+          <h2 className="card-title">{item.title || "Table"}</h2>
+          <div className="table-grid">
+            {rows.map((row, rowIndex) =>
+              row.map((cell, cellIndex) => (
+                <div className="table-cell" key={`${rowIndex}-${cellIndex}`}>
+                  {cell}
+                </div>
+              )),
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article className="card" onContextMenu={(event) => onItemContextMenu(event, item)}>
       <div className="card-body">
@@ -2396,8 +2530,8 @@ function ResizeHandle({ item, onResize }) {
       className="resize-handle"
       type="button"
       onPointerDown={handlePointerDown}
-      title="逕ｻ蜒上し繧､繧ｺ繧定ｪｿ遽"
-      aria-label="逕ｻ蜒上し繧､繧ｺ繧定ｪｿ遽"
+      title="画像サイズを調整"
+      aria-label="画像サイズを調整"
     />
   );
 }
@@ -2406,9 +2540,10 @@ function CardActions({ onEdit, onDelete }) {
   return (
     <div className="card-actions" onClick={(event) => event.stopPropagation()}>
       <button className="ghost" type="button" onClick={onEdit}>
-        邱ｨ髮・      </button>
+        編集
+      </button>
       <button className="ghost danger" type="button" onClick={onDelete}>
-        蜑企勁
+        削除
       </button>
     </div>
   );
@@ -2552,10 +2687,11 @@ function DialogActions({ onClose }) {
   return (
     <div className="dialog-actions">
       <button className="secondary" type="button" onClick={onClose}>
-        繧ｭ繝｣繝ｳ繧ｻ繝ｫ
+        キャンセル
       </button>
       <button className="primary" type="submit">
-        菫晏ｭ・      </button>
+        保存
+      </button>
     </div>
   );
 }
@@ -2564,15 +2700,16 @@ function BoardContextMenu({ x, y, onEdit, onDelete }) {
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
       <button type="button" onClick={onEdit}>
-        繝懊・繝峨ｒ邱ｨ髮・      </button>
+        ボードを編集
+      </button>
       <button className="danger" type="button" onClick={onDelete}>
-        繝懊・繝峨ｒ蜑企勁
+        ボードを削除
       </button>
     </div>
   );
 }
 
-function ItemContextMenu({ x, y, item, onEdit, onDuplicate, onDownload, onOpenAsset, onDelete }) {
+function ItemContextMenu({ x, y, item, onEdit, onDuplicate, onDownload, onOpenAsset, onReplace, onDelete }) {
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
       {(item.type === "image" || item.type === "video") && (
@@ -2585,6 +2722,9 @@ function ItemContextMenu({ x, y, item, onEdit, onDuplicate, onDownload, onOpenAs
           </button>
           <button type="button" onClick={onEdit}>
             画像を置換 / 編集
+          </button>
+          <button type="button" onClick={onReplace}>
+            ファイルを置換
           </button>
         </>
       )}
@@ -2749,26 +2889,6 @@ function DrawDialog({ onClose, onSave }) {
       x: ((event.clientX - rect.left) / rect.width) * canvasRef.current.width,
       y: ((event.clientY - rect.top) / rect.height) * canvasRef.current.height,
     };
-  }
-
-  if (item.type === "draw" && item.imagePath) {
-    return (
-      <article className="card sticker-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
-        <img className="sticker-image" src={item.imagePath} alt={item.title || "Draw sticker"} draggable="false" />
-      </article>
-    );
-  }
-
-  if (item.type === "shape-line") {
-    return <article className="card sticker-card sticker-line" onContextMenu={(event) => onItemContextMenu(event, item)} />;
-  }
-
-  if (item.type === "shape-rect") {
-    return <article className="card sticker-card sticker-rect" onContextMenu={(event) => onItemContextMenu(event, item)} />;
-  }
-
-  if (item.type === "shape-circle") {
-    return <article className="card sticker-card sticker-circle" onContextMenu={(event) => onItemContextMenu(event, item)} />;
   }
 
   function startDraw(event) {
