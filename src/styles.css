@@ -546,6 +546,17 @@ button {
   font-size: 12px;
 }
 
+.inline-editor {
+  width: 100%;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: inherit;
+  line-height: inherit;
+}
+
 .card-body {
   padding: 14px 14px 8px;
 }
@@ -1005,6 +1016,11 @@ button {
   margin-top: 2px;
 }
 
+.todo-line-text {
+  flex: 1;
+  margin: 0;
+}
+
 .comment-card .card-body {
   padding-left: 18px;
   border-left: 3px solid color-mix(in srgb, var(--accent) 74%, transparent);
@@ -1044,19 +1060,19 @@ button {
 
 .sticker-line::before {
   top: 50%;
-  height: 4px;
+  height: var(--stroke-width, 4px);
   border-radius: 999px;
-  background: white;
+  background: var(--stroke-color, white);
   transform: translateY(-50%) rotate(var(--line-angle, 0deg));
 }
 
 .sticker-rect::before {
-  border: 4px solid white;
+  border: var(--stroke-width, 4px) solid var(--stroke-color, white);
   border-radius: 8px;
 }
 
 .sticker-circle::before {
-  border: 4px solid white;
+  border: var(--stroke-width, 4px) solid var(--stroke-color, white);
   border-radius: 999px;
 }
 
@@ -1156,7 +1172,7 @@ button {
   padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
-  background: rgba(15, 18, 22, 0.38);
+  background: rgba(15, 18, 22, 0.2);
   color: white;
   backdrop-filter: blur(14px);
   transform: translateY(0);
@@ -1235,7 +1251,7 @@ button {
   right: 24px;
   bottom: 24px;
   left: 24px;
-  background: rgba(15, 18, 22, 0.16);
+  background: rgba(15, 18, 22, 0.08);
   transform: translateY(2px);
 }
 
@@ -1272,6 +1288,17 @@ button {
 
 .draw-actions {
   justify-content: flex-start;
+}
+
+.draw-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.draw-field {
+  min-width: 140px;
 }
 
 .image-edit-wrap {

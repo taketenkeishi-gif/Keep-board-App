@@ -265,6 +265,9 @@ export default function App() {
   );
   const lightboxIndex = visibleImages.findIndex((item) => item.id === lightboxId);
   const lightboxItem = lightboxIndex >= 0 ? visibleImages[lightboxIndex] : null;
+  const selectedItem = selectedItemIds.length
+    ? boardItems.find((item) => item.id === selectedItemIds[0]) || null
+    : null;
   const selectedImageItem =
     boardItems.find(
       (item) => selectedItemIds.includes(item.id) && (item.type === "image" || item.type === "video") && item.imagePath,
@@ -498,10 +501,37 @@ export default function App() {
       comment: { title: "Comment", content: "コメントを書く", widthUnits: 3, heightUnits: 2 },
       column: { title: "Column", content: "見出し\n本文", widthUnits: 4, heightUnits: 5 },
       table: { title: "Table", content: "項目 | 内容\n--- | ---", widthUnits: 4, heightUnits: 4 },
-      draw: { title: "Sticker", content: "", widthUnits: 4, heightUnits: 4, sticker: true },
-      "shape-line": { title: "Line", content: "", widthUnits: 4, heightUnits: 1, sticker: true, angleDeg: 0 },
-      "shape-rect": { title: "Rect", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
-      "shape-circle": { title: "Circle", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
+      draw: { title: "Sticker", content: "", widthUnits: 4, heightUnits: 4, sticker: true, angleDeg: 0 },
+      "shape-line": {
+        title: "Line",
+        content: "",
+        widthUnits: 4,
+        heightUnits: 1,
+        sticker: true,
+        angleDeg: 0,
+        strokeColor: "#ffffff",
+        strokeWidth: 4,
+      },
+      "shape-rect": {
+        title: "Rect",
+        content: "",
+        widthUnits: 3,
+        heightUnits: 3,
+        sticker: true,
+        angleDeg: 0,
+        strokeColor: "#ffffff",
+        strokeWidth: 4,
+      },
+      "shape-circle": {
+        title: "Circle",
+        content: "",
+        widthUnits: 3,
+        heightUnits: 3,
+        sticker: true,
+        angleDeg: 0,
+        strokeColor: "#ffffff",
+        strokeWidth: 4,
+      },
     };
     const base = templates[type];
     if (!base) return;
@@ -554,6 +584,25 @@ export default function App() {
         lines[lineIndex] = lines[lineIndex].trim().startsWith("[x]")
           ? lines[lineIndex].replace(/^\[x\]\s*/i, "")
           : `[x] ${lines[lineIndex].replace(/^\[( |x)\]\s*/i, "").replace(/^・\s*/, "")}`;
+        return {
+          ...item,
+          content: lines.join("\n"),
+          updatedAt: now(),
+        };
+      }),
+    }));
+  }
+
+  function updateTodoLine(itemId, lineIndex, value) {
+    updateState((previous) => ({
+      ...previous,
+      items: previous.items.map((item) => {
+        if (item.id !== itemId) return item;
+        const lines = (item.content || "").split(/\r?\n/);
+        if (lineIndex < 0 || lineIndex >= lines.length) return item;
+        const checked = lines[lineIndex].trim().startsWith("[x]");
+        const nextLine = value.trim();
+        lines[lineIndex] = checked ? `[x] ${nextLine}` : `・${nextLine}`;
         return {
           ...item,
           content: lines.join("\n"),
@@ -773,14 +822,20 @@ export default function App() {
   }
 
   function resizeMediaItem(itemId, nextSpan, nextRows) {
-    const widthUnits = Math.min(MAX_CARD_SPAN, Math.max(MIN_CARD_SPAN, nextSpan));
-    const heightUnits = Math.min(MAX_CARD_ROWS, Math.max(MIN_CARD_ROWS, nextRows));
-    updateState((previous) => ({
-      ...previous,
-      items: previous.items.map((item) =>
-        item.id === itemId ? { ...item, widthUnits, heightUnits, updatedAt: now() } : item,
-      ),
-    }));
+    updateState((previous) => {
+      const target = previous.items.find((item) => item.id === itemId);
+      if (!target) return previous;
+      const minSpan = target.sticker ? 1 : MIN_CARD_SPAN;
+      const minRows = target.sticker ? 1 : MIN_CARD_ROWS;
+      const widthUnits = Math.min(MAX_CARD_SPAN, Math.max(minSpan, nextSpan));
+      const heightUnits = Math.min(MAX_CARD_ROWS, Math.max(minRows, nextRows));
+      return {
+        ...previous,
+        items: previous.items.map((item) =>
+          item.id === itemId ? { ...item, widthUnits, heightUnits, updatedAt: now() } : item,
+        ),
+      };
+    });
   }
 
   function moveItemsOnBoard(itemIds, positions) {
@@ -869,6 +924,17 @@ export default function App() {
     updateState((previous) => ({
       ...previous,
       items: previous.items.map((item) => (item.id === itemId ? { ...item, ...patch, updatedAt: now() } : item)),
+    }));
+  }
+
+  function patchShapeStyle(itemId, patch) {
+    updateState((previous) => ({
+      ...previous,
+      items: previous.items.map((item) => {
+        if (item.id !== itemId) return item;
+        if (!item.sticker) return item;
+        return { ...item, ...patch, updatedAt: now() };
+      }),
     }));
   }
 
@@ -1176,6 +1242,7 @@ export default function App() {
               labels={boardLabels}
               labelStats={boardLabelStats}
               selectedLabels={selectedLabels}
+              selectedItem={selectedItem}
               activeTool={activeTool}
               selectedImageItem={selectedImageItem}
               labelSortMode={labelSortMode}
@@ -1188,11 +1255,14 @@ export default function App() {
               onClearLabels={() => setSelectedLabels([])}
               onLabelSortModeChange={setLabelSortMode}
               onToggleLabelPanel={() => setShowLabelPanel((current) => !current)}
+              onStyleChange={(item, patch) => patchShapeStyle(item.id, patch)}
               onImageAction={(action, item) => {
                 if (action === "crop") {
                   setDialog({ kind: "imageEdit", mode: "crop", item });
                 } else if (action === "annotate") {
                   setDialog({ kind: "imageEdit", mode: "annotate", item });
+                } else if (action === "edit-draw") {
+                  setDialog({ kind: "drawEdit", item });
                 }
               }}
               onPick={(tool) => {
@@ -1205,6 +1275,10 @@ export default function App() {
                   return;
                 }
                 if (tool === "draw" || tool.startsWith("shape-")) {
+                  if (tool === "draw") {
+                    setDialog({ kind: "drawEdit", item: null, position: { x: 120, y: 120 } });
+                    return;
+                  }
                   setActiveTool((current) => (current === tool ? null : tool));
                   return;
                 }
@@ -1227,6 +1301,8 @@ export default function App() {
               onDelete={deleteItem}
               onTodoAdd={appendTodoItem}
               onTodoToggle={toggleTodoLine}
+              onTodoEdit={updateTodoLine}
+              onPatchItem={patchItem}
               onResize={resizeMediaItem}
               onToggleCaption={setActiveCaptionId}
               onOpenLightbox={setLightboxId}
@@ -1235,7 +1311,13 @@ export default function App() {
               onMoveToBoard={moveItemToBoard}
               activeTool={activeTool}
               onActiveToolChange={setActiveTool}
-              onTextDoubleClick={(item) => setDialog({ kind: "item", type: item.type, item })}
+              onTextDoubleClick={(item) => {
+                if (item.type === "draw") {
+                  setDialog({ kind: "drawEdit", item });
+                } else {
+                  setDialog({ kind: "item", type: item.type, item });
+                }
+              }}
               onQuickAdd={(tool, position, overrides = {}) => {
                 if (tool === "board") {
                   createSubBoard();
@@ -1246,11 +1328,7 @@ export default function App() {
                     createQuickItem("draw", position, overrides);
                     return;
                   }
-                  if (position) {
-                    setDialog({ kind: "drawEdit", item: null, position });
-                    return;
-                  }
-                  setActiveTool("draw");
+                  setDialog({ kind: "drawEdit", item: null, position: position || { x: 120, y: 120 } });
                   return;
                 }
                 if (tool === "image" || tool === "video") {
@@ -1985,6 +2063,8 @@ function BoardCanvas({
   onDelete,
   onTodoAdd,
   onTodoToggle,
+  onTodoEdit,
+  onPatchItem,
   onResize,
   onToggleCaption,
   onOpenLightbox,
@@ -2143,20 +2223,36 @@ function BoardCanvas({
 
       if (shapeDraft) {
         const rect = normalizeSelectionRect(shapeDraft.start, shapeDraft.current);
-        const widthUnits = clamp(Math.ceil((rect.width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
-        const heightUnits = clamp(Math.ceil((rect.height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 1, MAX_CARD_ROWS);
-        const angleDeg = shapeDraft.tool === "shape-line" ? getLineAngle(shapeDraft.start, shapeDraft.current) : 0;
+        let widthUnits = clamp(Math.ceil((rect.width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 1, MAX_CARD_SPAN);
+        let heightUnits = clamp(Math.ceil((rect.height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 1, MAX_CARD_ROWS);
+        let angleDeg = 0;
+        let position = { x: rect.x, y: rect.y };
+
+        if (shapeDraft.tool === "shape-line") {
+          const dx = shapeDraft.current.x - shapeDraft.start.x;
+          const dy = shapeDraft.current.y - shapeDraft.start.y;
+          const length = Math.max(24, Math.hypot(dx, dy));
+          const lineHeightPx = 20;
+          widthUnits = clamp(Math.ceil((length + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 1, MAX_CARD_SPAN);
+          heightUnits = 1;
+          angleDeg = getLineAngle(shapeDraft.start, shapeDraft.current);
+          const pixelWidth = widthUnits * BOARD_UNIT + (widthUnits - 1) * BOARD_GAP;
+          const pixelHeight = lineHeightPx;
+          const centerX = (shapeDraft.start.x + shapeDraft.current.x) / 2;
+          const centerY = (shapeDraft.start.y + shapeDraft.current.y) / 2;
+          position = { x: centerX - pixelWidth / 2, y: centerY - pixelHeight / 2 };
+        }
+
         onQuickAdd(
           shapeDraft.tool,
-          clampPosition(
-            { type: shapeDraft.tool, widthUnits, heightUnits, sticker: true },
-            { x: rect.x, y: rect.y },
-          ),
+          clampPosition({ type: shapeDraft.tool, widthUnits, heightUnits, sticker: true }, position),
           {
             widthUnits,
-            heightUnits: shapeDraft.tool === "shape-line" ? Math.max(1, Math.min(2, heightUnits)) : heightUnits,
+            heightUnits,
             sticker: true,
             angleDeg,
+            strokeColor: "#ffffff",
+            strokeWidth: 4,
           },
         );
         setShapeDraft(null);
@@ -2334,13 +2430,13 @@ function BoardCanvas({
   }
 
   function handleBoardDragOver(event) {
-    const tool = event.dataTransfer?.getData("application/x-keep-tool");
+    const tool = getSidebarToolFromDataTransfer(event.dataTransfer);
     if (!tool) return;
     event.preventDefault();
   }
 
   function handleBoardDrop(event) {
-    const tool = event.dataTransfer?.getData("application/x-keep-tool");
+    const tool = getSidebarToolFromDataTransfer(event.dataTransfer);
     if (!tool) return;
     event.preventDefault();
     event.stopPropagation();
@@ -2399,6 +2495,8 @@ function BoardCanvas({
               onDelete={onDelete}
               onTodoAdd={onTodoAdd}
               onTodoToggle={onTodoToggle}
+              onTodoEdit={onTodoEdit}
+              onPatchItem={onPatchItem}
               onResize={onResize}
               onToggleCaption={onToggleCaption}
               onOpenLightbox={onOpenLightbox}
@@ -2420,6 +2518,11 @@ function BoardCanvas({
                 top: Math.min(shapeDraft.start.y, shapeDraft.current.y),
                 width: Math.max(12, Math.abs(shapeDraft.current.x - shapeDraft.start.x)),
                 height: Math.max(12, Math.abs(shapeDraft.current.y - shapeDraft.start.y)),
+                transform:
+                  shapeDraft.tool === "shape-line"
+                    ? `rotate(${getLineAngle(shapeDraft.start, shapeDraft.current)}deg)`
+                    : undefined,
+                transformOrigin: shapeDraft.tool === "shape-line" ? "left center" : undefined,
               }}
             />
           )}
@@ -2456,6 +2559,8 @@ function FreeCard({
   onDelete,
   onTodoAdd,
   onTodoToggle,
+  onTodoEdit,
+  onPatchItem,
   onResize,
   onToggleCaption,
   onOpenLightbox,
@@ -2501,6 +2606,8 @@ function FreeCard({
         onDelete={onDelete}
         onTodoAdd={onTodoAdd}
         onTodoToggle={onTodoToggle}
+        onTodoEdit={onTodoEdit}
+        onPatchItem={onPatchItem}
         onResize={onResize}
         onToggleCaption={onToggleCaption}
         onOpenLightbox={onOpenLightbox}
@@ -2511,10 +2618,20 @@ function FreeCard({
   );
 }
 
+function getSidebarToolFromDataTransfer(dataTransfer) {
+  if (!dataTransfer) return "";
+  const direct = dataTransfer.getData("application/x-keep-tool");
+  if (direct) return direct;
+  const text = dataTransfer.getData("text/plain");
+  const matched = text.match(/^keep-tool:(.+)$/);
+  return matched?.[1] || "";
+}
+
 function BoardSidebar({
   labels,
   labelStats,
   selectedLabels,
+  selectedItem,
   activeTool,
   selectedImageItem,
   labelSortMode,
@@ -2524,6 +2641,7 @@ function BoardSidebar({
   onPick,
   onLabelSortModeChange,
   onToggleLabelPanel,
+  onStyleChange,
   onImageAction,
 }) {
   const sections = [
@@ -2581,6 +2699,7 @@ function BoardSidebar({
                     onDragStart={(event) => {
                       event.dataTransfer.effectAllowed = "copy";
                       event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                      event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
                     }}
                   >
                     <span>{tool.icon}</span>
@@ -2605,6 +2724,50 @@ function BoardSidebar({
               </button>
             )}
             <p className="sidebar-empty">画像カード選択中は専用メニューを表示します。</p>
+          </section>
+        )}
+
+        {selectedItem?.sticker && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">オブジェクト調整</div>
+            {selectedItem.type === "draw" && (
+              <button className="tool-button image-tool" type="button" onClick={() => onImageAction("edit-draw", selectedItem)}>
+                <span>✎</span>
+                <small>Draw編集</small>
+              </button>
+            )}
+            {selectedItem.type !== "draw" && (
+              <>
+                <label className="field">
+                  <span>色</span>
+                  <input
+                    type="color"
+                    value={selectedItem.strokeColor || "#ffffff"}
+                    onChange={(event) => onStyleChange(selectedItem, { strokeColor: event.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span>太さ: {selectedItem.strokeWidth || 4}px</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="16"
+                    value={selectedItem.strokeWidth || 4}
+                    onChange={(event) => onStyleChange(selectedItem, { strokeWidth: Number(event.target.value) })}
+                  />
+                </label>
+              </>
+            )}
+            <label className="field">
+              <span>角度: {Math.round(selectedItem.angleDeg || 0)}°</span>
+              <input
+                type="range"
+                min="-180"
+                max="180"
+                value={selectedItem.angleDeg || 0}
+                onChange={(event) => onStyleChange(selectedItem, { angleDeg: Number(event.target.value) })}
+              />
+            </label>
           </section>
         )}
 
@@ -2701,6 +2864,79 @@ function BoardCard({ board, thumbnail, count, onOpen, onContextMenu }) {
   );
 }
 
+function EditableText({ value, className, multiline = false, placeholder = "", displayAs = "div", onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+
+  useEffect(() => {
+    if (!editing) setDraft(value || "");
+  }, [value, editing]);
+
+  if (!editing) {
+    const text = value || placeholder;
+    const Tag = displayAs;
+    return (
+      <Tag
+        className={className}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          setDraft(value || "");
+          setEditing(true);
+        }}
+      >
+        {text}
+      </Tag>
+    );
+  }
+
+  const save = () => {
+    onSave(draft);
+    setEditing(false);
+  };
+
+  return multiline ? (
+    <textarea
+      className={`${className} inline-editor`}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={save}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setDraft(value || "");
+          setEditing(false);
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          save();
+        }
+      }}
+      autoFocus
+    />
+  ) : (
+    <input
+      className={`${className} inline-editor`}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={save}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          save();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setDraft(value || "");
+          setEditing(false);
+        }
+      }}
+      autoFocus
+    />
+  );
+}
+
 function ItemCard({
   item,
   board,
@@ -2713,6 +2949,8 @@ function ItemCard({
   onDelete,
   onTodoAdd,
   onTodoToggle,
+  onTodoEdit,
+  onPatchItem,
   onResize,
   onToggleCaption,
   onOpenLightbox,
@@ -2761,8 +2999,21 @@ function ItemCard({
           <img src={item.imagePath} alt={item.title || "画像カード"} draggable="false" />
           <div className="media-caption">
             {item.label && <div className="chip">{item.label}</div>}
-            <div className="caption-title">{item.title || "Untitled"}</div>
-            {item.content && <div className="caption-content">{item.content}</div>}
+            <EditableText
+              value={item.title}
+              className="caption-title"
+              placeholder="Untitled"
+              displayAs="div"
+              onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            />
+            <EditableText
+              value={item.content}
+              className="caption-content"
+              placeholder="メモを入力"
+              multiline
+              displayAs="div"
+              onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+            />
           </div>
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -2783,8 +3034,21 @@ function ItemCard({
           <video src={item.imagePath} controls muted preload="metadata" draggable="false" />
           <div className="media-caption">
             {item.label && <div className="chip">{item.label}</div>}
-            <div className="caption-title">{item.title || "Untitled"}</div>
-            {item.content && <div className="caption-content">{item.content}</div>}
+            <EditableText
+              value={item.title}
+              className="caption-title"
+              placeholder="Untitled"
+              displayAs="div"
+              onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            />
+            <EditableText
+              value={item.content}
+              className="caption-content"
+              placeholder="メモを入力"
+              multiline
+              displayAs="div"
+              onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+            />
           </div>
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -2799,7 +3063,13 @@ function ItemCard({
         onContextMenu={(event) => onItemContextMenu(event, item)}
         onDoubleClick={() => onTextDoubleClick(item)}
       >
-        <img className="sticker-image" src={item.imagePath} alt={item.title || "Draw sticker"} draggable="false" />
+        <img
+          className="sticker-image"
+          src={item.imagePath}
+          alt={item.title || "Draw sticker"}
+          draggable="false"
+          style={{ transform: `rotate(${item.angleDeg || 0}deg)` }}
+        />
         <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
@@ -2808,7 +3078,14 @@ function ItemCard({
   if (item.type === "shape-line") {
     return (
       <article className="card sticker-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
-        <div className="sticker-line" style={{ "--line-angle": `${item.angleDeg || 0}deg` }} />
+        <div
+          className="sticker-line"
+          style={{
+            "--line-angle": `${item.angleDeg || 0}deg`,
+            "--stroke-color": item.strokeColor || "#ffffff",
+            "--stroke-width": `${item.strokeWidth || 4}px`,
+          }}
+        />
         <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
@@ -2816,7 +3093,15 @@ function ItemCard({
 
   if (item.type === "shape-rect") {
     return (
-      <article className="card sticker-card sticker-rect" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card sticker-card sticker-rect"
+        style={{
+          "--stroke-color": item.strokeColor || "#ffffff",
+          "--stroke-width": `${item.strokeWidth || 4}px`,
+          transform: `rotate(${item.angleDeg || 0}deg)`,
+        }}
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+      >
         <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
@@ -2824,7 +3109,15 @@ function ItemCard({
 
   if (item.type === "shape-circle") {
     return (
-      <article className="card sticker-card sticker-circle" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card sticker-card sticker-circle"
+        style={{
+          "--stroke-color": item.strokeColor || "#ffffff",
+          "--stroke-width": `${item.strokeWidth || 4}px`,
+          transform: `rotate(${item.angleDeg || 0}deg)`,
+        }}
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+      >
         <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
@@ -2836,12 +3129,17 @@ function ItemCard({
       <article
         className="card todo-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">To-do</div>
           <div className="todo-head">
-            <h2 className="card-title">{item.title || "To-do"}</h2>
+            <EditableText
+              value={item.title}
+              className="card-title"
+              placeholder="To-do"
+              displayAs="h2"
+              onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            />
             <button
               className="todo-add"
               type="button"
@@ -2861,7 +3159,13 @@ function ItemCard({
                   checked={line.trim().startsWith("[x]")}
                   onChange={() => onTodoToggle(item.id, index)}
                 />
-                <span>{line.replace(/^\[( |x)\]\s*/i, "").replace(/^・\s*/, "")}</span>
+                <EditableText
+                  value={line.replace(/^\[( |x)\]\s*/i, "").replace(/^・\s*/, "")}
+                  className="todo-line-text"
+                  placeholder="項目"
+                  displayAs="span"
+                  onSave={(nextLine) => onTodoEdit(item.id, index, nextLine)}
+                />
               </label>
             ))}
           </div>
@@ -2875,11 +3179,17 @@ function ItemCard({
       <article
         className="card comment-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">Comment</div>
-          <p className="card-content">{item.content || "コメントを書く"}</p>
+          <EditableText
+            value={item.content}
+            className="card-content"
+            placeholder="コメントを書く"
+            multiline
+            displayAs="p"
+            onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+          />
         </div>
       </article>
     );
@@ -2891,13 +3201,33 @@ function ItemCard({
       <article
         className="card column-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">Column</div>
-          <h2 className="card-title">{item.title || "Column"}</h2>
-          {headline && <p className="column-headline">{headline}</p>}
-          {bodyLines.length > 0 && <p className="card-content">{bodyLines.join("\n")}</p>}
+          <EditableText
+            value={item.title}
+            className="card-title"
+            placeholder="Column"
+            displayAs="h2"
+            onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+          />
+          {headline && (
+            <EditableText
+              value={headline}
+              className="column-headline"
+              displayAs="p"
+              onSave={(nextHeadline) => onPatchItem(item.id, { content: [nextHeadline, ...bodyLines].join("\n") })}
+            />
+          )}
+          {bodyLines.length > 0 && (
+            <EditableText
+              value={bodyLines.join("\n")}
+              className="card-content"
+              multiline
+              displayAs="p"
+              onSave={(nextBody) => onPatchItem(item.id, { content: [headline || "", ...nextBody.split(/\r?\n/)].join("\n").trim() })}
+            />
+          )}
         </div>
       </article>
     );
@@ -2912,11 +3242,16 @@ function ItemCard({
       <article
         className="card table-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">Table</div>
-          <h2 className="card-title">{item.title || "Table"}</h2>
+          <EditableText
+            value={item.title}
+            className="card-title"
+            placeholder="Table"
+            displayAs="h2"
+            onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+          />
           <div className="table-grid">
             {rows.map((row, rowIndex) =>
               row.map((cell, cellIndex) => (
@@ -2935,13 +3270,25 @@ function ItemCard({
     <article
       className="card"
       onContextMenu={(event) => onItemContextMenu(event, item)}
-      onDoubleClick={() => onTextDoubleClick(item)}
     >
       <div className="card-body">
         <div className="card-kicker">{itemLabels[item.type]}</div>
-        <h2 className="card-title">{item.title || itemLabels[item.type]}</h2>
+        <EditableText
+          value={item.title}
+          className="card-title"
+          placeholder={itemLabels[item.type]}
+          displayAs="h2"
+          onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+        />
         {item.label && <span className="chip inline-chip">{item.label}</span>}
-        {item.content && <p className="card-content">{item.content}</p>}
+        <EditableText
+          value={item.content}
+          className="card-content"
+          placeholder=""
+          multiline
+          displayAs="p"
+          onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+        />
         {item.type === "link" && item.url && (
           <a className="card-link" href={item.url} target="_blank" rel="noreferrer">
             {item.url}
@@ -3354,6 +3701,10 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
 function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
+  const [brushColor, setBrushColor] = useState("#ffffff");
+  const [brushSize, setBrushSize] = useState(6);
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -3369,8 +3720,16 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
     const image = new Image();
     image.onload = () => {
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const snapshot = canvas.toDataURL("image/png");
+      setHistory([snapshot]);
+      setHistoryIndex(0);
     };
     image.src = initialImage;
+    if (!initialImage) {
+      const snapshot = canvas.toDataURL("image/png");
+      setHistory([snapshot]);
+      setHistoryIndex(0);
+    }
   }, [initialImage]);
 
   function clearCanvas() {
@@ -3378,6 +3737,34 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
     const context = canvas?.getContext("2d");
     if (!context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
+    const snapshot = canvas.toDataURL("image/png");
+    setHistory((previous) => [...previous.slice(0, historyIndex + 1), snapshot]);
+    setHistoryIndex((index) => index + 1);
+  }
+
+  function restoreHistory(targetIndex) {
+    if (targetIndex < 0 || targetIndex >= history.length) return;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!context) return;
+    const image = new Image();
+    image.onload = () => {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      setHistoryIndex(targetIndex);
+    };
+    image.src = history[targetIndex];
+  }
+
+  function saveSnapshot() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const snapshot = canvas.toDataURL("image/png");
+    setHistory((previous) => {
+      const next = [...previous.slice(0, historyIndex + 1), snapshot];
+      setHistoryIndex(next.length - 1);
+      return next;
+    });
   }
 
   function getPoint(event) {
@@ -3394,6 +3781,8 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
     drawingRef.current = true;
     context.beginPath();
     context.moveTo(point.x, point.y);
+    context.strokeStyle = brushColor;
+    context.lineWidth = brushSize;
   }
 
   function moveDraw(event) {
@@ -3405,6 +3794,9 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
   }
 
   function endDraw() {
+    if (drawingRef.current) {
+      saveSnapshot();
+    }
     drawingRef.current = false;
   }
 
@@ -3419,6 +3811,38 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
         }}
       >
         <h2>{title}</h2>
+        <div className="draw-toolbar">
+          <label className="field draw-field">
+            <span>色</span>
+            <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
+          </label>
+          <label className="field draw-field">
+            <span>太さ: {brushSize}px</span>
+            <input
+              type="range"
+              min="1"
+              max="30"
+              value={brushSize}
+              onChange={(event) => setBrushSize(Number(event.target.value))}
+            />
+          </label>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => restoreHistory(historyIndex - 1)}
+            disabled={historyIndex <= 0}
+          >
+            Undo
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => restoreHistory(historyIndex + 1)}
+            disabled={historyIndex >= history.length - 1}
+          >
+            Redo
+          </button>
+        </div>
         <canvas
           ref={canvasRef}
           className="draw-canvas"
@@ -3444,6 +3868,11 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
   const cropDraftRef = useRef(null);
+  const [brushColor, setBrushColor] = useState("#ffef7f");
+  const [brushSize, setBrushSize] = useState(5);
+  const [annotateTool, setAnnotateTool] = useState("draw");
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [imageRect, setImageRect] = useState(null);
   const [cropRect, setCropRect] = useState(null);
 
@@ -3462,9 +3891,37 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
       context.drawImage(image, x, y, width, height);
       setImageRect({ x, y, width, height, naturalWidth: image.width, naturalHeight: image.height });
       setCropRect(null);
+      const snapshot = canvas.toDataURL("image/png");
+      setHistory([snapshot]);
+      setHistoryIndex(0);
     };
     image.src = item.imagePath;
   }, [item?.id, item?.imagePath, mode]);
+
+  function saveSnapshot() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const snapshot = canvas.toDataURL("image/png");
+    setHistory((previous) => {
+      const next = [...previous.slice(0, historyIndex + 1), snapshot];
+      setHistoryIndex(next.length - 1);
+      return next;
+    });
+  }
+
+  function restoreHistory(targetIndex) {
+    if (targetIndex < 0 || targetIndex >= history.length) return;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!context) return;
+    const image = new Image();
+    image.onload = () => {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      setHistoryIndex(targetIndex);
+    };
+    image.src = history[targetIndex];
+  }
 
   function getPoint(event) {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -3478,13 +3935,24 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     if (!imageRect) return;
     const point = getPoint(event);
     if (mode === "annotate") {
+      if (annotateTool === "text") {
+        const text = prompt("挿入テキスト");
+        if (text) {
+          const context = canvasRef.current.getContext("2d");
+          context.fillStyle = brushColor;
+          context.font = `${Math.max(12, brushSize * 4)}px "Segoe UI", sans-serif`;
+          context.fillText(text, point.x, point.y);
+          saveSnapshot();
+        }
+        return;
+      }
       const context = canvasRef.current.getContext("2d");
       drawingRef.current = true;
       context.beginPath();
       context.moveTo(point.x, point.y);
-      context.lineWidth = 5;
+      context.lineWidth = brushSize;
       context.lineCap = "round";
-      context.strokeStyle = "#ffef7f";
+      context.strokeStyle = brushColor;
       return;
     }
     cropDraftRef.current = point;
@@ -3511,6 +3979,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   }
 
   function endPointer() {
+    if (drawingRef.current) saveSnapshot();
     drawingRef.current = false;
     cropDraftRef.current = null;
   }
@@ -3546,6 +4015,54 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     <Dialog onClose={onClose}>
       <form onSubmit={handleSave}>
         <h2>{mode === "crop" ? "画像をクリップ" : "画像に書き込み"}</h2>
+        {mode === "annotate" && (
+          <div className="draw-toolbar">
+            <label className="field draw-field">
+              <span>色</span>
+              <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
+            </label>
+            <label className="field draw-field">
+              <span>太さ: {brushSize}px</span>
+              <input
+                type="range"
+                min="1"
+                max="30"
+                value={brushSize}
+                onChange={(event) => setBrushSize(Number(event.target.value))}
+              />
+            </label>
+            <button
+              className={annotateTool === "draw" ? "toolbar-button compact accent" : "toolbar-button compact"}
+              type="button"
+              onClick={() => setAnnotateTool("draw")}
+            >
+              線
+            </button>
+            <button
+              className={annotateTool === "text" ? "toolbar-button compact accent" : "toolbar-button compact"}
+              type="button"
+              onClick={() => setAnnotateTool("text")}
+            >
+              文字
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => restoreHistory(historyIndex - 1)}
+              disabled={historyIndex <= 0}
+            >
+              Undo
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => restoreHistory(historyIndex + 1)}
+              disabled={historyIndex >= history.length - 1}
+            >
+              Redo
+            </button>
+          </div>
+        )}
         <div className="image-edit-wrap">
           <canvas
             ref={canvasRef}
@@ -3643,9 +4160,26 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
         }}
       >
         {item.type === "video" ? (
-          <video src={item.imagePath} controls autoPlay />
+          <video
+            src={item.imagePath}
+            controls
+            autoPlay
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              pingChrome();
+              setIsZoomed((value) => !value);
+            }}
+          />
         ) : (
-          <img src={item.imagePath} alt={item.title || "画像"} />
+          <img
+            src={item.imagePath}
+            alt={item.title || "画像"}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              pingChrome();
+              setIsZoomed((value) => !value);
+            }}
+          />
         )}
         <figcaption>
           {item.label && <span className="chip">{item.label}</span>}
