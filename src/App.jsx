@@ -1094,10 +1094,14 @@ export default function App() {
           }
         : null;
 
-    const droppedItem = await createDroppedVisualItem(event.dataTransfer);
-    if (droppedItem) {
-      const clampedPosition = dropPosition ? clampPosition(droppedItem, dropPosition) : null;
-      addDroppedItem(droppedItem, clampedPosition);
+    const droppedItems = await createDroppedVisualItems(event.dataTransfer);
+    if (droppedItems.length) {
+      droppedItems.forEach((droppedItem, index) => {
+        const offset = index * 28;
+        const targetPosition = dropPosition ? { x: dropPosition.x + offset, y: dropPosition.y + offset } : null;
+        const clampedPosition = targetPosition ? clampPosition(droppedItem, targetPosition) : null;
+        addDroppedItem(droppedItem, clampedPosition);
+      });
     }
   }
 
@@ -1845,8 +1849,55 @@ function getItemRows(item) {
   return Math.min(6, Math.max(2, Math.ceil(((item.title || "").length + (item.content || "").length) / 80) + 2));
 }
 
+const IMAGE_FILE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+  "avif",
+  "heic",
+  "heif",
+  "tif",
+  "tiff",
+]);
+
+const VIDEO_FILE_EXTENSIONS = new Set([
+  "mp4",
+  "mov",
+  "m4v",
+  "webm",
+  "avi",
+  "mkv",
+  "ogg",
+  "ogv",
+  "wmv",
+  "flv",
+  "mts",
+  "m2ts",
+]);
+
+function getFileExtension(filename) {
+  const matched = (filename || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return matched?.[1] || "";
+}
+
+function getDroppedMediaType(file) {
+  if (!file) return "";
+  if (file.type?.startsWith("image/")) return "image";
+  if (file.type?.startsWith("video/")) return "video";
+  const extension = getFileExtension(file.name);
+  if (IMAGE_FILE_EXTENSIONS.has(extension)) return "image";
+  if (VIDEO_FILE_EXTENSIONS.has(extension)) return "video";
+  return "";
+}
+
 function hasExternalDropData(dataTransfer) {
   if (!dataTransfer) return false;
+  const files = Array.from(dataTransfer.files || []);
+  if (files.some((file) => Boolean(getDroppedMediaType(file)))) return true;
   const types = Array.from(dataTransfer.types || []);
   return (
     types.includes("Files") ||
@@ -1857,12 +1908,10 @@ function hasExternalDropData(dataTransfer) {
 }
 
 async function createItemFromDrop(dataTransfer) {
-  const file = Array.from(dataTransfer.files || []).find((candidate) =>
-    candidate.type.startsWith("image/") || candidate.type.startsWith("video/"),
-  );
+  const file = Array.from(dataTransfer.files || []).find((candidate) => Boolean(getDroppedMediaType(candidate)));
 
   if (file) {
-    const type = file.type.startsWith("video/") ? "video" : "image";
+    const type = getDroppedMediaType(file) || "image";
     return {
       type,
       title: file.name.replace(/\.[^.]+$/, "") || (type === "video" ? "動画" : "画像"),
@@ -1970,12 +2019,10 @@ function titleFromUrl(value) {
 }
 
 async function createDroppedVisualItem(dataTransfer) {
-  const file = Array.from(dataTransfer.files || []).find((candidate) =>
-    candidate.type.startsWith("image/") || candidate.type.startsWith("video/"),
-  );
+  const file = Array.from(dataTransfer.files || []).find((candidate) => Boolean(getDroppedMediaType(candidate)));
 
   if (file) {
-    const type = file.type.startsWith("video/") ? "video" : "image";
+    const type = getDroppedMediaType(file) || "image";
     const imagePath = await readImageFile(file);
     const dimensions = await probeMediaDimensions(imagePath, type);
     return {
@@ -2020,6 +2067,33 @@ async function createDroppedVisualItem(dataTransfer) {
   }
 
   return createItemFromDrop(dataTransfer);
+}
+
+async function createDroppedVisualItems(dataTransfer) {
+  const files = Array.from(dataTransfer.files || []);
+  const mediaFiles = files
+    .map((file) => ({ file, type: getDroppedMediaType(file) }))
+    .filter((entry) => Boolean(entry.type));
+
+  if (mediaFiles.length) {
+    return Promise.all(
+      mediaFiles.map(async ({ file, type }) => {
+        const imagePath = await readImageFile(file);
+        const dimensions = await probeMediaDimensions(imagePath, type);
+        return {
+          type,
+          title: file.name.replace(/\.[^.]+$/, "") || (type === "video" ? "動画" : "画像"),
+          content: "",
+          imagePath,
+          url: "",
+          ...getAspectBasedCardSize(dimensions.width, dimensions.height, type),
+        };
+      }),
+    );
+  }
+
+  const single = await createDroppedVisualItem(dataTransfer);
+  return single ? [single] : [];
 }
 
 function SortableGrid({ children, ids, onDragEnd, sensors }) {
@@ -4674,7 +4748,6 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
   }, [hasNext, hasPrevious, onClose, onNext, onPrevious]);
 
   useEffect(() => {
-    setIsZoomed(false);
     pingChrome();
     setIsEditingTitle(false);
     setTitleDraft(item.title || "");
