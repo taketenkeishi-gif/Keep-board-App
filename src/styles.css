@@ -316,6 +316,10 @@ button {
   pointer-events: none;
 }
 
+.free-board.draw-mode .free-card {
+  pointer-events: none;
+}
+
 .free-card {
   position: absolute;
   height: auto;
@@ -368,6 +372,29 @@ button {
 
 .board-tool-canvas.active {
   opacity: 1;
+}
+
+.draw-toolbar-board {
+  position: sticky;
+  top: 14px;
+  z-index: 12;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.draw-toolbar-board .field {
+  margin: 0;
 }
 
 .shape-preview {
@@ -759,7 +786,7 @@ button {
   gap: 12px;
   height: 100%;
   align-content: flex-start;
-  padding: 12px 40px 12px 10px;
+  padding: 10px 34px 10px 8px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
   border-radius: 0 8px 8px 0;
@@ -1263,20 +1290,17 @@ button {
 
 .lightbox.zoomed .lightbox-figure {
   position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   place-items: center;
   z-index: 1;
 }
 
 .lightbox.zoomed .lightbox-figure img,
 .lightbox.zoomed .lightbox-figure video {
-  width: 100vw;
-  height: 100vh;
-  max-width: 100vw;
-  max-height: 100vh;
+  max-width: none;
+  max-height: none;
   border-radius: 0;
   object-fit: contain;
   transform: scale(1);
@@ -1380,6 +1404,22 @@ button {
   position: absolute;
   min-width: 48px;
   pointer-events: auto;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  cursor: move;
+}
+
+.annotation-move {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 5px;
+  background: rgba(18, 22, 30, 0.44);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  line-height: 1;
+  cursor: move;
 }
 
 .annotation-text input {

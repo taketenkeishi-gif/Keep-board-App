@@ -52,7 +52,7 @@ const itemLabels = {
   video: "動画",
   link: "リンク",
   board: "ボード",
-  todo: "To-do",
+  todo: "リスト",
   comment: "コメント",
   column: "Column",
   table: "Table",
@@ -273,6 +273,7 @@ export default function App() {
   const selectedTextItem =
     selectedItem &&
     !selectedItem.sticker &&
+    selectedItem.type !== "todo" &&
     selectedItem.type !== "image" &&
     selectedItem.type !== "video" &&
     selectedItem.type !== "board"
@@ -509,7 +510,7 @@ export default function App() {
     const templates = {
       note: { title: "新しいメモ", content: "", widthUnits: 3, heightUnits: 3 },
       link: { title: "新しいリンク", content: "", url: "https://", widthUnits: 3, heightUnits: 2 },
-      todo: { title: "To-do", content: "・やること", widthUnits: 3, heightUnits: 3 },
+      todo: { title: "リスト", content: "・やること", widthUnits: 3, heightUnits: 3 },
       comment: { title: "Comment", content: "コメントを書く", widthUnits: 3, heightUnits: 2 },
       column: { title: "Column", content: "見出し\n本文", widthUnits: 4, heightUnits: 5 },
       table: { title: "Table", content: "項目 | 内容\n--- | ---", widthUnits: 4, heightUnits: 4 },
@@ -2091,6 +2092,11 @@ function BoardCanvas({
   const [dragState, setDragState] = useState(null);
   const [panState, setPanState] = useState(null);
   const [shapeDraft, setShapeDraft] = useState(null);
+  const [drawColor, setDrawColor] = useState("#ffffff");
+  const [drawSize, setDrawSize] = useState(10);
+  const [drawTool, setDrawTool] = useState("pen");
+  const [drawStrokes, setDrawStrokes] = useState([]);
+  const [drawRedoStrokes, setDrawRedoStrokes] = useState([]);
   const positionedItems = useMemo(() => items.map((item, index) => withDefaultPosition(item, index)), [items]);
   const positionedById = useMemo(
     () => new Map(positionedItems.map((item) => [item.id, item])),
@@ -2098,6 +2104,33 @@ function BoardCanvas({
   );
   const canvasHeight =
     positionedItems.reduce((height, item) => Math.max(height, item.y + itemRect(item).height), 360) + 180;
+
+  function paintStroke(context, stroke, scale = 1) {
+    if (!stroke?.points?.length) return;
+    context.save();
+    context.globalCompositeOperation = stroke.mode === "eraser" ? "destination-out" : "source-over";
+    context.strokeStyle = stroke.color || "#ffffff";
+    context.lineWidth = Math.max(1, (stroke.size || 8) * scale);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    context.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (let index = 1; index < stroke.points.length; index += 1) {
+      const point = stroke.points[index];
+      context.lineTo(point.x, point.y);
+    }
+    context.stroke();
+    context.restore();
+  }
+
+  function redrawDrawCanvas(withDraft = drawDraftRef.current) {
+    const canvas = toolCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    for (const stroke of drawStrokes) paintStroke(context, stroke);
+    if (withDraft) paintStroke(context, withDraft);
+  }
 
   useEffect(() => {
     const canvas = toolCanvasRef.current;
@@ -2109,19 +2142,27 @@ function BoardCanvas({
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.lineCap = "round";
     context.lineJoin = "round";
-    context.strokeStyle = "rgba(255, 255, 255, 0.98)";
-    context.lineWidth = 10;
+    redrawDrawCanvas();
   }, [activeTool, canvasHeight]);
 
   useEffect(() => {
+    if (activeTool === "draw") {
+      onSelectedIdsChange([]);
+      setShapeDraft(null);
+      return;
+    }
     if (activeTool) return;
     drawDraftRef.current = null;
+    setDrawStrokes([]);
+    setDrawRedoStrokes([]);
     setShapeDraft(null);
-    const context = toolCanvasRef.current?.getContext("2d");
-    const canvas = toolCanvasRef.current;
-    if (!context || !canvas) return;
-    context.clearRect(0, 0, canvas.width, canvas.height);
+    redrawDrawCanvas(null);
   }, [activeTool]);
+
+  useEffect(() => {
+    if (activeTool !== "draw") return;
+    redrawDrawCanvas();
+  }, [drawStrokes, canvasHeight, activeTool]);
 
   useEffect(() => {
     function handleGlobalPointerMove(event) {
@@ -2146,16 +2187,12 @@ function BoardCanvas({
 
       if (drawDraftRef.current) {
         event.preventDefault();
-        const context = toolCanvasRef.current?.getContext("2d");
-        if (!context) return;
         const point = toBoardPoint(event.clientX, event.clientY);
-        context.lineTo(point.x, point.y);
-        context.stroke();
-        drawDraftRef.current.points.push(point);
-        drawDraftRef.current.minX = Math.min(drawDraftRef.current.minX, point.x);
-        drawDraftRef.current.minY = Math.min(drawDraftRef.current.minY, point.y);
-        drawDraftRef.current.maxX = Math.max(drawDraftRef.current.maxX, point.x);
-        drawDraftRef.current.maxY = Math.max(drawDraftRef.current.maxY, point.y);
+        drawDraftRef.current = {
+          ...drawDraftRef.current,
+          points: [...drawDraftRef.current.points, point],
+        };
+        redrawDrawCanvas();
         return;
       }
 
@@ -2197,33 +2234,11 @@ function BoardCanvas({
       if (drawDraftRef.current) {
         const draft = drawDraftRef.current;
         drawDraftRef.current = null;
-        const canvas = toolCanvasRef.current;
-        const context = canvas?.getContext("2d");
-        if (!canvas || !context) return;
-        const padding = 14;
-        const width = Math.max(36, Math.ceil(draft.maxX - draft.minX + padding * 2));
-        const height = Math.max(36, Math.ceil(draft.maxY - draft.minY + padding * 2));
-        const sourceX = Math.max(0, draft.minX - padding);
-        const sourceY = Math.max(0, draft.minY - padding);
-        const offscreen = document.createElement("canvas");
-        offscreen.width = width;
-        offscreen.height = height;
-        const offscreenContext = offscreen.getContext("2d");
-        offscreenContext.drawImage(canvas, sourceX, sourceY, width, height, 0, 0, width, height);
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        const widthUnits = clamp(Math.ceil(width / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
-        const heightUnits = clamp(Math.ceil(height / (BOARD_ROW + BOARD_GAP)), 2, MAX_CARD_ROWS);
-        onQuickAdd(
-          "draw",
-          clampPosition({ type: "draw", widthUnits, heightUnits, sticker: true }, { x: sourceX, y: sourceY }),
-          {
-            imagePath: offscreen.toDataURL("image/png"),
-            widthUnits,
-            heightUnits,
-            sticker: true,
-          },
-        );
-        onActiveToolChange(null);
+        if (draft.points.length >= 2) {
+          setDrawStrokes((previous) => [...previous, draft]);
+          setDrawRedoStrokes([]);
+        }
+        redrawDrawCanvas(null);
         return;
       }
 
@@ -2312,7 +2327,9 @@ function BoardCanvas({
       window.removeEventListener("pointercancel", handleGlobalPointerUp);
     };
   }, [
+    activeTool,
     dragState,
+    drawStrokes,
     onMove,
     onMoveToBoard,
     onSelectedIdsChange,
@@ -2352,17 +2369,13 @@ function BoardCanvas({
     if (activeTool === "draw") {
       event.preventDefault();
       const start = toBoardPoint(event.clientX, event.clientY);
-      const context = toolCanvasRef.current?.getContext("2d");
-      if (!context) return;
-      context.beginPath();
-      context.moveTo(start.x, start.y);
       drawDraftRef.current = {
+        mode: drawTool,
+        color: drawColor,
+        size: drawSize,
         points: [start],
-        minX: start.x,
-        minY: start.y,
-        maxX: start.x,
-        maxY: start.y,
       };
+      redrawDrawCanvas();
       return;
     }
 
@@ -2413,6 +2426,7 @@ function BoardCanvas({
   }
 
   function handleCardPointerDown(event, item) {
+    if (activeTool === "draw") return;
     if (event.button !== 0) return;
     if (event.target.closest("button, a, input, textarea, select, video, .resize-handle")) return;
 
@@ -2461,6 +2475,85 @@ function BoardCanvas({
     onQuickAdd(tool, position);
   }
 
+  function handleDrawUndo() {
+    setDrawStrokes((previous) => {
+      if (!previous.length) return previous;
+      const next = previous.slice(0, -1);
+      const removed = previous[previous.length - 1];
+      setDrawRedoStrokes((redo) => [...redo, removed]);
+      return next;
+    });
+  }
+
+  function handleDrawRedo() {
+    setDrawRedoStrokes((previous) => {
+      if (!previous.length) return previous;
+      const restored = previous[previous.length - 1];
+      setDrawStrokes((strokes) => [...strokes, restored]);
+      return previous.slice(0, -1);
+    });
+  }
+
+  function handleDrawDiscard() {
+    drawDraftRef.current = null;
+    setDrawStrokes([]);
+    setDrawRedoStrokes([]);
+    redrawDrawCanvas(null);
+    onActiveToolChange(null);
+  }
+
+  function handleDrawSave() {
+    if (!drawStrokes.length) {
+      handleDrawDiscard();
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const stroke of drawStrokes) {
+      const pad = Math.max(1, stroke.size || 8) / 2 + 4;
+      for (const point of stroke.points) {
+        minX = Math.min(minX, point.x - pad);
+        minY = Math.min(minY, point.y - pad);
+        maxX = Math.max(maxX, point.x + pad);
+        maxY = Math.max(maxY, point.y + pad);
+      }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return;
+    }
+    const width = Math.max(36, Math.ceil(maxX - minX));
+    const height = Math.max(36, Math.ceil(maxY - minY));
+    const offscreen = document.createElement("canvas");
+    offscreen.width = width;
+    offscreen.height = height;
+    const context = offscreen.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, width, height);
+    for (const stroke of drawStrokes) {
+      const translated = {
+        ...stroke,
+        points: stroke.points.map((point) => ({ x: point.x - minX, y: point.y - minY })),
+      };
+      paintStroke(context, translated);
+    }
+    const widthUnits = clamp(Math.ceil((width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
+    const heightUnits = clamp(Math.ceil((height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 2, MAX_CARD_ROWS);
+    const position = clampPosition({ type: "draw", widthUnits, heightUnits, sticker: true }, { x: minX, y: minY });
+    onQuickAdd("draw", position, {
+      imagePath: offscreen.toDataURL("image/png"),
+      widthUnits,
+      heightUnits,
+      sticker: true,
+    });
+    drawDraftRef.current = null;
+    setDrawStrokes([]);
+    setDrawRedoStrokes([]);
+    redrawDrawCanvas(null);
+    onActiveToolChange(null);
+  }
+
   return (
     <div
       ref={viewportRef}
@@ -2477,9 +2570,58 @@ function BoardCanvas({
           minHeight: canvasHeight * zoom,
         }}
       >
+        {activeTool === "draw" && (
+          <div className="draw-toolbar-board" onPointerDown={(event) => event.stopPropagation()}>
+            <button
+              className={drawTool === "pen" ? "tool-button compact active" : "tool-button compact"}
+              type="button"
+              onClick={() => setDrawTool("pen")}
+            >
+              ペン
+            </button>
+            <button
+              className={drawTool === "eraser" ? "tool-button compact active" : "tool-button compact"}
+              type="button"
+              onClick={() => setDrawTool("eraser")}
+            >
+              消しゴム
+            </button>
+            <label className="field draw-field compact">
+              <span>色</span>
+              <input
+                type="color"
+                value={drawColor}
+                disabled={drawTool === "eraser"}
+                onChange={(event) => setDrawColor(event.target.value)}
+              />
+            </label>
+            <label className="field draw-field compact">
+              <span>太さ: {drawSize}px</span>
+              <input
+                type="range"
+                min="1"
+                max="36"
+                value={drawSize}
+                onChange={(event) => setDrawSize(Number(event.target.value))}
+              />
+            </label>
+            <button className="secondary" type="button" onClick={handleDrawUndo} disabled={!drawStrokes.length}>
+              Undo
+            </button>
+            <button className="secondary" type="button" onClick={handleDrawRedo} disabled={!drawRedoStrokes.length}>
+              Redo
+            </button>
+            <button className="secondary" type="button" onClick={handleDrawDiscard}>
+              Discard
+            </button>
+            <button className="primary" type="button" onClick={handleDrawSave}>
+              Save
+            </button>
+          </div>
+        )}
         <section
           ref={boardRef}
-          className={activeTool ? "free-board tool-active" : "free-board"}
+          className={activeTool === "draw" ? "free-board tool-active draw-mode" : activeTool ? "free-board tool-active" : "free-board"}
           data-board-root="true"
           data-zoom={zoom}
           style={{
@@ -2667,7 +2809,7 @@ function BoardSidebar({
     { id: "note", label: "Note", icon: "📝" },
     { id: "image", label: "Image", icon: "🖼" },
     { id: "link", label: "Link", icon: "🔗" },
-    { id: "todo", label: "To-do", icon: "☑" },
+    { id: "todo", label: "リスト", icon: "☑" },
     { id: "comment", label: "Comment", icon: "💬" },
     { id: "column", label: "Column", icon: "▤" },
     { id: "table", label: "Table", icon: "▦" },
@@ -3257,12 +3399,12 @@ function ItemCard({
         onContextMenu={(event) => onItemContextMenu(event, item)}
       >
         <div className="card-body">
-          <div className="card-kicker">To-do</div>
+          <div className="card-kicker">リスト</div>
           <div className="todo-head">
             <EditableText
               value={item.title}
               className="card-title"
-              placeholder="To-do"
+              placeholder="リスト"
               displayAs="h2"
               style={itemTextStyle}
               onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
@@ -4424,6 +4566,14 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
                     }}
                     onPointerDown={(event) => beginTextTransform(event, annotation, "move")}
                   >
+                    <button
+                      className="annotation-move"
+                      type="button"
+                      onPointerDown={(event) => beginTextTransform(event, annotation, "move")}
+                      aria-label="テキストを移動"
+                    >
+                      ⠿
+                    </button>
                     <input
                       value={annotation.text}
                       onChange={(event) => updateAnnotation(annotation.id, { text: event.target.value })}
@@ -4465,7 +4615,33 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
   const [showChrome, setShowChrome] = useState(true);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(item.title || "");
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [mediaNaturalSize, setMediaNaturalSize] = useState({
+    width: item.mediaWidth || 0,
+    height: item.mediaHeight || 0,
+  });
   const hideTimerRef = useRef(null);
+
+  const zoomMetrics = useMemo(() => {
+    const viewportWidth = Math.max(0, viewportSize.width);
+    const viewportHeight = Math.max(0, viewportSize.height);
+    const naturalWidth = Math.max(0, mediaNaturalSize.width);
+    const naturalHeight = Math.max(0, mediaNaturalSize.height);
+    if (!viewportWidth || !viewportHeight || !naturalWidth || !naturalHeight) return null;
+    const ratio = naturalWidth / naturalHeight;
+    let width = viewportWidth;
+    let height = width / ratio;
+    if (height > viewportHeight) {
+      height = viewportHeight;
+      width = height * ratio;
+    }
+    return {
+      width,
+      height,
+      left: (viewportWidth - width) / 2,
+      top: (viewportHeight - height) / 2,
+    };
+  }, [mediaNaturalSize.height, mediaNaturalSize.width, viewportSize.height, viewportSize.width]);
 
   function pingChrome() {
     setShowChrome(true);
@@ -4490,9 +4666,22 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
     pingChrome();
     setIsEditingTitle(false);
     setTitleDraft(item.title || "");
+    setMediaNaturalSize({ width: item.mediaWidth || 0, height: item.mediaHeight || 0 });
   }, [item.id]);
 
   useEffect(() => () => window.clearTimeout(hideTimerRef.current), []);
+
+  useEffect(() => {
+    function updateViewportSize() {
+      setViewportSize({
+        width: document.documentElement.clientWidth || window.innerWidth || 0,
+        height: document.documentElement.clientHeight || window.innerHeight || 0,
+      });
+    }
+    updateViewportSize();
+    window.addEventListener("resize", updateViewportSize);
+    return () => window.removeEventListener("resize", updateViewportSize);
+  }, []);
 
   return (
     <div
@@ -4521,6 +4710,16 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
       </button>
       <figure
         className="lightbox-figure"
+        style={
+          isZoomed && zoomMetrics
+            ? {
+                width: `${zoomMetrics.width}px`,
+                height: `${zoomMetrics.height}px`,
+                left: `${zoomMetrics.left}px`,
+                top: `${zoomMetrics.top}px`,
+              }
+            : undefined
+        }
         onClick={(event) => event.stopPropagation()}
         onDoubleClick={() => {
           pingChrome();
@@ -4532,6 +4731,15 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
             src={item.imagePath}
             controls
             autoPlay
+            onLoadedMetadata={(event) =>
+              setMediaNaturalSize({
+                width: event.currentTarget.videoWidth || item.mediaWidth || 0,
+                height: event.currentTarget.videoHeight || item.mediaHeight || 0,
+              })
+            }
+            style={
+              isZoomed && zoomMetrics ? { width: `${zoomMetrics.width}px`, height: `${zoomMetrics.height}px` } : undefined
+            }
             onDoubleClick={(event) => {
               event.stopPropagation();
               pingChrome();
@@ -4542,6 +4750,15 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
           <img
             src={item.imagePath}
             alt={item.title || "画像"}
+            onLoad={(event) =>
+              setMediaNaturalSize({
+                width: event.currentTarget.naturalWidth || item.mediaWidth || 0,
+                height: event.currentTarget.naturalHeight || item.mediaHeight || 0,
+              })
+            }
+            style={
+              isZoomed && zoomMetrics ? { width: `${zoomMetrics.width}px`, height: `${zoomMetrics.height}px` } : undefined
+            }
             onDoubleClick={(event) => {
               event.stopPropagation();
               pingChrome();
