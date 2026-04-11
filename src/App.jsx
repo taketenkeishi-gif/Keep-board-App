@@ -31,6 +31,8 @@ const BOARD_DROP_STEP = 20;
 const BOARD_ZOOM_MIN = 0.67;
 const BOARD_ZOOM_MAX = 3;
 const SWAP_OVERLAP_RATIO = 0.38;
+const SWAP_ZONE_INSET_RATIO = 0.3;
+const BOARD_EDGE_PADDING = 20;
 
 const defaultSettings = {
   fontSize: 15,
@@ -218,6 +220,8 @@ export default function App() {
   const [selectedLabels, setSelectedLabels] = useState([]);
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [activeTool, setActiveTool] = useState(null);
+  const [labelSortMode, setLabelSortMode] = useState("count-desc");
+  const [showLabelPanel, setShowLabelPanel] = useState(false);
   const mediaReplaceRef = useRef({ itemId: null });
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
@@ -248,11 +252,23 @@ export default function App() {
     () => [...new Set(boardItems.map((item) => item.label).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja")),
     [boardItems],
   );
+  const boardLabelStats = useMemo(() => {
+    const statsMap = new Map();
+    for (const item of boardItems) {
+      if (!item.label) continue;
+      statsMap.set(item.label, (statsMap.get(item.label) || 0) + 1);
+    }
+    return [...statsMap.entries()].map(([label, count]) => ({ label, count }));
+  }, [boardItems]);
   const visibleImages = visibleBoardItems.filter(
     (item) => (item.type === "image" || item.type === "video") && item.imagePath,
   );
   const lightboxIndex = visibleImages.findIndex((item) => item.id === lightboxId);
   const lightboxItem = lightboxIndex >= 0 ? visibleImages[lightboxIndex] : null;
+  const selectedImageItem =
+    boardItems.find(
+      (item) => selectedItemIds.includes(item.id) && (item.type === "image" || item.type === "video") && item.imagePath,
+    ) || null;
   const canUndo = undoStackRef.current.length > 0;
   const canRedo = redoStackRef.current.length > 0;
 
@@ -275,6 +291,7 @@ export default function App() {
     setSelectedItemIds([]);
     setActiveCaptionId(null);
     setActiveTool(null);
+    setShowLabelPanel(false);
   }, [currentBoardId]);
 
   useEffect(() => {
@@ -482,7 +499,7 @@ export default function App() {
       column: { title: "Column", content: "見出し\n本文", widthUnits: 4, heightUnits: 5 },
       table: { title: "Table", content: "項目 | 内容\n--- | ---", widthUnits: 4, heightUnits: 4 },
       draw: { title: "Sticker", content: "", widthUnits: 4, heightUnits: 4, sticker: true },
-      "shape-line": { title: "Line", content: "", widthUnits: 4, heightUnits: 1, sticker: true },
+      "shape-line": { title: "Line", content: "", widthUnits: 4, heightUnits: 1, sticker: true, angleDeg: 0 },
       "shape-rect": { title: "Rect", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
       "shape-circle": { title: "Circle", content: "", widthUnits: 3, heightUnits: 3, sticker: true },
     };
@@ -560,7 +577,7 @@ export default function App() {
     input.click();
   }
 
-  async function saveItem(type, values, item = null) {
+  async function saveItem(type, values, item = null, position = null) {
     const createdAt = now();
     const imagePath = values.imageFile?.size
       ? await readImageFile(values.imageFile)
@@ -596,7 +613,8 @@ export default function App() {
         ...previous,
         items: [
           ...previous.items,
-          {
+          (() => {
+            const draft = {
             id: createId("item"),
             boardId: currentBoardId,
             type,
@@ -606,7 +624,14 @@ export default function App() {
             order: boardItems.length,
             createdAt,
             ...record,
-          },
+            };
+            const clampedPosition = position ? clampPosition(draft, position) : null;
+            return {
+              ...draft,
+              x: clampedPosition?.x,
+              y: clampedPosition?.y,
+            };
+          })(),
         ],
       };
     });
@@ -837,6 +862,13 @@ export default function App() {
             }
           : item,
       ),
+    }));
+  }
+
+  function patchItem(itemId, patch) {
+    updateState((previous) => ({
+      ...previous,
+      items: previous.items.map((item) => (item.id === itemId ? { ...item, ...patch, updatedAt: now() } : item)),
     }));
   }
 
@@ -1142,14 +1174,27 @@ export default function App() {
             </section>
             <BoardSidebar
               labels={boardLabels}
+              labelStats={boardLabelStats}
               selectedLabels={selectedLabels}
               activeTool={activeTool}
+              selectedImageItem={selectedImageItem}
+              labelSortMode={labelSortMode}
+              showLabelPanel={showLabelPanel}
               onToggleLabel={(label) =>
                 setSelectedLabels((labels) =>
                   labels.includes(label) ? labels.filter((item) => item !== label) : [...labels, label],
                 )
               }
               onClearLabels={() => setSelectedLabels([])}
+              onLabelSortModeChange={setLabelSortMode}
+              onToggleLabelPanel={() => setShowLabelPanel((current) => !current)}
+              onImageAction={(action, item) => {
+                if (action === "crop") {
+                  setDialog({ kind: "imageEdit", mode: "crop", item });
+                } else if (action === "annotate") {
+                  setDialog({ kind: "imageEdit", mode: "annotate", item });
+                }
+              }}
               onPick={(tool) => {
                 if (tool === "image" || tool === "video" || tool === "link" || tool === "note") {
                   setDialog({ kind: "item", type: tool });
@@ -1190,6 +1235,7 @@ export default function App() {
               onMoveToBoard={moveItemToBoard}
               activeTool={activeTool}
               onActiveToolChange={setActiveTool}
+              onTextDoubleClick={(item) => setDialog({ kind: "item", type: item.type, item })}
               onQuickAdd={(tool, position, overrides = {}) => {
                 if (tool === "board") {
                   createSubBoard();
@@ -1198,6 +1244,10 @@ export default function App() {
                 if (tool === "draw") {
                   if (overrides.imagePath) {
                     createQuickItem("draw", position, overrides);
+                    return;
+                  }
+                  if (position) {
+                    setDialog({ kind: "drawEdit", item: null, position });
                     return;
                   }
                   setActiveTool("draw");
@@ -1266,7 +1316,7 @@ export default function App() {
           type={dialog.type}
           onClose={() => setDialog(null)}
           onSave={async (values) => {
-            await saveItem(dialog.type, values, dialog.item);
+            await saveItem(dialog.type, values, dialog.item, dialog.position || null);
             setDialog(null);
           }}
         />
@@ -1280,6 +1330,44 @@ export default function App() {
           onSave={(nextSettings, nextTheme) => {
             setSettings(nextSettings);
             setTheme(nextTheme);
+            setDialog(null);
+          }}
+        />
+      )}
+
+      {dialog?.kind === "drawEdit" && (
+        <DrawDialog
+          initialImage={dialog.item?.imagePath || ""}
+          title={dialog.item ? "Draw を編集" : "Draw Sticker"}
+          onClose={() => setDialog(null)}
+          onSave={(values) => {
+            if (dialog.item) {
+              patchItem(dialog.item.id, {
+                imagePath: values.imagePath,
+                widthUnits: values.widthUnits,
+                heightUnits: values.heightUnits,
+                sticker: true,
+              });
+            } else {
+              createQuickItem("draw", dialog.position || { x: 40, y: 40 }, {
+                imagePath: values.imagePath,
+                widthUnits: values.widthUnits,
+                heightUnits: values.heightUnits,
+                sticker: true,
+              });
+            }
+            setDialog(null);
+          }}
+        />
+      )}
+
+      {dialog?.kind === "imageEdit" && (
+        <ImageEditDialog
+          item={dialog.item}
+          mode={dialog.mode}
+          onClose={() => setDialog(null)}
+          onSave={(nextImagePath) => {
+            patchItem(dialog.item.id, { imagePath: nextImagePath });
             setDialog(null);
           }}
         />
@@ -1327,6 +1415,18 @@ export default function App() {
             openMediaReplacePicker(contextMenu.item);
             setContextMenu(null);
           }}
+          onDrawEdit={() => {
+            setDialog({ kind: "drawEdit", item: contextMenu.item });
+            setContextMenu(null);
+          }}
+          onCrop={() => {
+            setDialog({ kind: "imageEdit", mode: "crop", item: contextMenu.item });
+            setContextMenu(null);
+          }}
+          onAnnotate={() => {
+            setDialog({ kind: "imageEdit", mode: "annotate", item: contextMenu.item });
+            setContextMenu(null);
+          }}
           onDelete={() => {
             deleteItem(contextMenu.item);
             setContextMenu(null);
@@ -1342,6 +1442,7 @@ export default function App() {
           onClose={() => setLightboxId(null)}
           onPrevious={() => setLightboxId(visibleImages[lightboxIndex - 1]?.id || lightboxItem.id)}
           onNext={() => setLightboxId(visibleImages[lightboxIndex + 1]?.id || lightboxItem.id)}
+          onTitleChange={(title) => patchItem(lightboxItem.id, { title })}
         />
       )}
     </div>
@@ -1399,8 +1500,9 @@ function clamp(value, min, max) {
 
 function clampPosition(item, position) {
   const size = getItemSize(item);
+  const maxX = Math.max(0, BOARD_CANVAS_WIDTH - size.width - BOARD_EDGE_PADDING);
   return {
-    x: clamp(Math.round(position.x / 10) * 10, 0, Math.max(0, BOARD_CANVAS_WIDTH - size.width)),
+    x: clamp(Math.round(position.x / 10) * 10, 0, maxX),
     y: Math.max(0, Math.round(position.y / 10) * 10),
   };
 }
@@ -1415,6 +1517,26 @@ function getOverlapRatio(a, b) {
   const overlapArea = getOverlapArea(a, b);
   if (!overlapArea) return 0;
   return overlapArea / Math.min(a.width * a.height, b.width * b.height);
+}
+
+function getRectCenter(rect) {
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+function isSwapZoneHit(movedRect, targetRect) {
+  const center = getRectCenter(movedRect);
+  const insetX = targetRect.width * SWAP_ZONE_INSET_RATIO;
+  const insetY = targetRect.height * SWAP_ZONE_INSET_RATIO;
+  return (
+    center.x >= targetRect.x + insetX &&
+    center.x <= targetRect.x + targetRect.width - insetX &&
+    center.y >= targetRect.y + insetY &&
+    center.y <= targetRect.y + targetRect.height - insetY
+  );
+}
+
+function getLineAngle(from, to) {
+  return Math.round((Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
 }
 
 function distanceBetweenPositions(a, b) {
@@ -1497,12 +1619,13 @@ function resolveBoardPlacement(items, movedIds) {
       .map((candidate) => ({
         candidate,
         ratio: getOverlapRatio(itemRect(moved), itemRect(candidate)),
+        swapZoneHit: isSwapZoneHit(itemRect(moved), itemRect(candidate)),
       }))
       .filter((entry) => entry.ratio > 0)
       .sort((a, b) => b.ratio - a.ratio);
 
     if (collisions[0]) {
-      if (collisions[0].ratio < SWAP_OVERLAP_RATIO) {
+      if (collisions[0].ratio < SWAP_OVERLAP_RATIO || !collisions[0].swapZoneHit) {
         Object.assign(
           moved,
           findNearestOpenPosition(moved, stationary, { x: moved.x || 0, y: moved.y || 0 }),
@@ -1573,13 +1696,14 @@ function getDragCollisionPreview(positionedById, dragState, offset) {
     .map((candidate) => ({
       id: candidate.id,
       ratio: getOverlapRatio(movedRect, itemRect(candidate)),
+      swapZoneHit: isSwapZoneHit(movedRect, itemRect(candidate)),
     }))
     .filter((entry) => entry.ratio > 0)
     .sort((a, b) => b.ratio - a.ratio);
   if (!collisions.length) return null;
   return {
     targetId: collisions[0].id,
-    mode: collisions[0].ratio >= SWAP_OVERLAP_RATIO ? "swap" : "push",
+    mode: collisions[0].ratio >= SWAP_OVERLAP_RATIO && collisions[0].swapZoneHit ? "swap" : "push",
   };
 }
 
@@ -1869,6 +1993,7 @@ function BoardCanvas({
   onMoveToBoard,
   activeTool,
   onActiveToolChange,
+  onTextDoubleClick,
   onQuickAdd,
 }) {
   const viewportRef = useRef(null);
@@ -2020,6 +2145,7 @@ function BoardCanvas({
         const rect = normalizeSelectionRect(shapeDraft.start, shapeDraft.current);
         const widthUnits = clamp(Math.ceil((rect.width + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 2, MAX_CARD_SPAN);
         const heightUnits = clamp(Math.ceil((rect.height + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 1, MAX_CARD_ROWS);
+        const angleDeg = shapeDraft.tool === "shape-line" ? getLineAngle(shapeDraft.start, shapeDraft.current) : 0;
         onQuickAdd(
           shapeDraft.tool,
           clampPosition(
@@ -2030,6 +2156,7 @@ function BoardCanvas({
             widthUnits,
             heightUnits: shapeDraft.tool === "shape-line" ? Math.max(1, Math.min(2, heightUnits)) : heightUnits,
             sticker: true,
+            angleDeg,
           },
         );
         setShapeDraft(null);
@@ -2221,10 +2348,6 @@ function BoardCanvas({
       { widthUnits: 4, heightUnits: 4, type: tool, sticker: tool.startsWith("shape-") || tool === "draw" },
       toBoardPoint(event.clientX, event.clientY),
     );
-    if (tool === "draw") {
-      onActiveToolChange("draw");
-      return;
-    }
     onQuickAdd(tool, position);
   }
 
@@ -2281,6 +2404,7 @@ function BoardCanvas({
               onOpenLightbox={onOpenLightbox}
               onItemContextMenu={onItemContextMenu}
               onPointerDown={handleCardPointerDown}
+              onTextDoubleClick={onTextDoubleClick}
             />
           ))}
           <canvas
@@ -2337,6 +2461,7 @@ function FreeCard({
   onOpenLightbox,
   onItemContextMenu,
   onPointerDown,
+  onTextDoubleClick,
 }) {
   const board = boards.find((candidate) => candidate.id === item.linkedBoardId);
   const size = getItemSize(item);
@@ -2380,12 +2505,27 @@ function FreeCard({
         onToggleCaption={onToggleCaption}
         onOpenLightbox={onOpenLightbox}
         onItemContextMenu={onItemContextMenu}
+        onTextDoubleClick={onTextDoubleClick}
       />
     </div>
   );
 }
 
-function BoardSidebar({ labels, selectedLabels, activeTool, onToggleLabel, onClearLabels, onPick }) {
+function BoardSidebar({
+  labels,
+  labelStats,
+  selectedLabels,
+  activeTool,
+  selectedImageItem,
+  labelSortMode,
+  showLabelPanel,
+  onToggleLabel,
+  onClearLabels,
+  onPick,
+  onLabelSortModeChange,
+  onToggleLabelPanel,
+  onImageAction,
+}) {
   const sections = [
     {
       title: "追加",
@@ -2410,52 +2550,98 @@ function BoardSidebar({ labels, selectedLabels, activeTool, onToggleLabel, onCle
       ],
     },
   ];
+  const sortedLabelStats = [...labelStats].sort((a, b) => {
+    if (labelSortMode === "name-asc") return a.label.localeCompare(b.label, "ja");
+    if (labelSortMode === "name-desc") return b.label.localeCompare(a.label, "ja");
+    if (labelSortMode === "selected-first") {
+      const aSelected = selectedLabels.includes(a.label) ? 1 : 0;
+      const bSelected = selectedLabels.includes(b.label) ? 1 : 0;
+      if (aSelected !== bSelected) return bSelected - aSelected;
+      return b.count - a.count || a.label.localeCompare(b.label, "ja");
+    }
+    return b.count - a.count || a.label.localeCompare(b.label, "ja");
+  });
 
   return (
     <aside className="board-sidebar">
       <div className="board-sidebar-tab">Tools</div>
       <div className="board-sidebar-panel">
-        {sections.map((section) => (
-          <section className="sidebar-section" key={section.title}>
-            <div className="sidebar-title">{section.title}</div>
-            <div className="sidebar-tool-grid">
-              {section.tools.map((tool) => (
-                <button
-                  key={tool.id}
-                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
-                  type="button"
-                  draggable
-                  onClick={() => onPick(tool.id)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "copy";
-                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
-                  }}
-                >
-                  <span>{tool.icon}</span>
-                  <small>{tool.label}</small>
-                </button>
-              ))}
-            </div>
+        {!selectedImageItem &&
+          sections.map((section) => (
+            <section className="sidebar-section" key={section.title}>
+              <div className="sidebar-title">{section.title}</div>
+              <div className="sidebar-tool-grid">
+                {section.tools.map((tool) => (
+                  <button
+                    key={tool.id}
+                    className={activeTool === tool.id ? "tool-button active" : "tool-button"}
+                    type="button"
+                    draggable
+                    onClick={() => onPick(tool.id)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "copy";
+                      event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                    }}
+                  >
+                    <span>{tool.icon}</span>
+                    <small>{tool.label}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+
+        {selectedImageItem && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">画像ツール</div>
+            <button className="tool-button image-tool" type="button" onClick={() => onImageAction("crop", selectedImageItem)}>
+              <span>✂</span>
+              <small>クリップ</small>
+            </button>
+            {selectedImageItem.type === "image" && (
+              <button className="tool-button image-tool" type="button" onClick={() => onImageAction("annotate", selectedImageItem)}>
+                <span>✎</span>
+                <small>書き込み</small>
+              </button>
+            )}
+            <p className="sidebar-empty">画像カード選択中は専用メニューを表示します。</p>
           </section>
-        ))}
+        )}
 
         <section className="sidebar-section">
           <div className="sidebar-title">ラベル</div>
-          {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
-          {labels.map((label) => (
-            <label className="label-check" key={label}>
-              <input
-                type="checkbox"
-                checked={selectedLabels.includes(label)}
-                onChange={() => onToggleLabel(label)}
-              />
-              <span>{label}</span>
-            </label>
-          ))}
-          {!!selectedLabels.length && (
-            <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
-              すべて表示
-            </button>
+          <button className="ghost sidebar-toggle" type="button" onClick={onToggleLabelPanel}>
+            {showLabelPanel ? "ラベル一覧を閉じる" : "ラベル一覧を開く"}
+          </button>
+          {showLabelPanel && (
+            <div className="label-panel">
+              <label className="field">
+                <span>並び替え</span>
+                <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
+                  <option value="count-desc">使用数が多い順</option>
+                  <option value="selected-first">選択中を先頭</option>
+                  <option value="name-asc">名前 昇順</option>
+                  <option value="name-desc">名前 降順</option>
+                </select>
+              </label>
+              {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
+              {sortedLabelStats.map((entry) => (
+                <label className="label-check" key={entry.label}>
+                  <input
+                    type="checkbox"
+                    checked={selectedLabels.includes(entry.label)}
+                    onChange={() => onToggleLabel(entry.label)}
+                  />
+                  <span>{entry.label}</span>
+                  <small>{entry.count}</small>
+                </label>
+              ))}
+              {!!selectedLabels.length && (
+                <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
+                  すべて表示
+                </button>
+              )}
+            </div>
           )}
         </section>
       </div>
@@ -2531,6 +2717,7 @@ function ItemCard({
   onToggleCaption,
   onOpenLightbox,
   onItemContextMenu,
+  onTextDoubleClick,
 }) {
   if (item.type === "board") {
     return (
@@ -2607,28 +2794,50 @@ function ItemCard({
 
   if (item.type === "draw" && item.imagePath) {
     return (
-      <article className="card sticker-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card sticker-card"
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
+      >
         <img className="sticker-image" src={item.imagePath} alt={item.title || "Draw sticker"} draggable="false" />
+        <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
   }
 
   if (item.type === "shape-line") {
-    return <article className="card sticker-card sticker-line" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+    return (
+      <article className="card sticker-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <div className="sticker-line" style={{ "--line-angle": `${item.angleDeg || 0}deg` }} />
+        <ResizeHandle item={item} onResize={onResize} />
+      </article>
+    );
   }
 
   if (item.type === "shape-rect") {
-    return <article className="card sticker-card sticker-rect" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+    return (
+      <article className="card sticker-card sticker-rect" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <ResizeHandle item={item} onResize={onResize} />
+      </article>
+    );
   }
 
   if (item.type === "shape-circle") {
-    return <article className="card sticker-card sticker-circle" onContextMenu={(event) => onItemContextMenu(event, item)} />;
+    return (
+      <article className="card sticker-card sticker-circle" onContextMenu={(event) => onItemContextMenu(event, item)}>
+        <ResizeHandle item={item} onResize={onResize} />
+      </article>
+    );
   }
 
   if (item.type === "todo") {
     const lines = (item.content || "・やること").split(/\r?\n/).filter(Boolean);
     return (
-      <article className="card todo-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card todo-card"
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
+      >
         <div className="card-body">
           <div className="card-kicker">To-do</div>
           <div className="todo-head">
@@ -2663,7 +2872,11 @@ function ItemCard({
 
   if (item.type === "comment") {
     return (
-      <article className="card comment-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card comment-card"
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
+      >
         <div className="card-body">
           <div className="card-kicker">Comment</div>
           <p className="card-content">{item.content || "コメントを書く"}</p>
@@ -2675,7 +2888,11 @@ function ItemCard({
   if (item.type === "column") {
     const [headline, ...bodyLines] = (item.content || "").split(/\r?\n/);
     return (
-      <article className="card column-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card column-card"
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
+      >
         <div className="card-body">
           <div className="card-kicker">Column</div>
           <h2 className="card-title">{item.title || "Column"}</h2>
@@ -2692,7 +2909,11 @@ function ItemCard({
       .filter(Boolean)
       .map((line) => line.split("|").map((cell) => cell.trim()));
     return (
-      <article className="card table-card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+      <article
+        className="card table-card"
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
+      >
         <div className="card-body">
           <div className="card-kicker">Table</div>
           <h2 className="card-title">{item.title || "Table"}</h2>
@@ -2711,7 +2932,11 @@ function ItemCard({
   }
 
   return (
-    <article className="card" onContextMenu={(event) => onItemContextMenu(event, item)}>
+    <article
+      className="card"
+      onContextMenu={(event) => onItemContextMenu(event, item)}
+      onDoubleClick={() => onTextDoubleClick(item)}
+    >
       <div className="card-body">
         <div className="card-kicker">{itemLabels[item.type]}</div>
         <h2 className="card-title">{item.title || itemLabels[item.type]}</h2>
@@ -2761,8 +2986,8 @@ function ResizeHandle({ item, onResize }) {
       className="resize-handle"
       type="button"
       onPointerDown={handlePointerDown}
-      title="画像サイズを調整"
-      aria-label="画像サイズを調整"
+      title="サイズを調整"
+      aria-label="サイズを調整"
     />
   );
 }
@@ -2940,7 +3165,20 @@ function BoardContextMenu({ x, y, onEdit, onDelete }) {
   );
 }
 
-function ItemContextMenu({ x, y, item, onEdit, onDuplicate, onDownload, onOpenAsset, onReplace, onDelete }) {
+function ItemContextMenu({
+  x,
+  y,
+  item,
+  onEdit,
+  onDuplicate,
+  onDownload,
+  onOpenAsset,
+  onReplace,
+  onDrawEdit,
+  onCrop,
+  onAnnotate,
+  onDelete,
+}) {
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
       {(item.type === "image" || item.type === "video") && (
@@ -2957,7 +3195,22 @@ function ItemContextMenu({ x, y, item, onEdit, onDuplicate, onDownload, onOpenAs
           <button type="button" onClick={onReplace}>
             ファイルを置換
           </button>
+          {item.type === "image" && (
+            <>
+              <button type="button" onClick={onCrop}>
+                画像をクリップ
+              </button>
+              <button type="button" onClick={onAnnotate}>
+                画像に書き込み
+              </button>
+            </>
+          )}
         </>
+      )}
+      {item.type === "draw" && (
+        <button type="button" onClick={onDrawEdit}>
+          Draw を編集
+        </button>
       )}
       {item.type !== "image" && item.type !== "video" && (
         <button type="button" onClick={onEdit}>
@@ -3098,7 +3351,7 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
   );
 }
 
-function DrawDialog({ onClose, onSave }) {
+function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
 
@@ -3112,7 +3365,20 @@ function DrawDialog({ onClose, onSave }) {
     context.lineCap = "round";
     context.lineJoin = "round";
     context.strokeStyle = "#ffffff";
-  }, []);
+    if (!initialImage) return;
+    const image = new Image();
+    image.onload = () => {
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    };
+    image.src = initialImage;
+  }, [initialImage]);
+
+  function clearCanvas() {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
   function getPoint(event) {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -3147,10 +3413,12 @@ function DrawDialog({ onClose, onSave }) {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          onSave({ imagePath: canvasRef.current.toDataURL("image/png") });
+          const imagePath = canvasRef.current.toDataURL("image/png");
+          const dimensions = getAspectBasedCardSize(canvasRef.current.width, canvasRef.current.height, "image");
+          onSave({ imagePath, widthUnits: dimensions.widthUnits, heightUnits: dimensions.heightUnits });
         }}
       >
-        <h2>Draw Sticker</h2>
+        <h2>{title}</h2>
         <canvas
           ref={canvasRef}
           className="draw-canvas"
@@ -3161,15 +3429,157 @@ function DrawDialog({ onClose, onSave }) {
           onPointerUp={endDraw}
           onPointerLeave={endDraw}
         />
+        <div className="dialog-actions draw-actions">
+          <button className="secondary" type="button" onClick={clearCanvas}>
+            クリア
+          </button>
+        </div>
         <DialogActions onClose={onClose} />
       </form>
     </Dialog>
   );
 }
 
-function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
+function ImageEditDialog({ item, mode, onClose, onSave }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const cropDraftRef = useRef(null);
+  const [imageRect, setImageRect] = useState(null);
+  const [cropRect, setCropRect] = useState(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context || !item?.imagePath) return;
+    const image = new Image();
+    image.onload = () => {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      const x = (canvas.width - width) / 2;
+      const y = (canvas.height - height) / 2;
+      context.drawImage(image, x, y, width, height);
+      setImageRect({ x, y, width, height, naturalWidth: image.width, naturalHeight: image.height });
+      setCropRect(null);
+    };
+    image.src = item.imagePath;
+  }, [item?.id, item?.imagePath, mode]);
+
+  function getPoint(event) {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvasRef.current.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvasRef.current.height,
+    };
+  }
+
+  function startPointer(event) {
+    if (!imageRect) return;
+    const point = getPoint(event);
+    if (mode === "annotate") {
+      const context = canvasRef.current.getContext("2d");
+      drawingRef.current = true;
+      context.beginPath();
+      context.moveTo(point.x, point.y);
+      context.lineWidth = 5;
+      context.lineCap = "round";
+      context.strokeStyle = "#ffef7f";
+      return;
+    }
+    cropDraftRef.current = point;
+    setCropRect({ x: point.x, y: point.y, width: 0, height: 0 });
+  }
+
+  function movePointer(event) {
+    if (mode === "annotate") {
+      if (!drawingRef.current) return;
+      const context = canvasRef.current.getContext("2d");
+      const point = getPoint(event);
+      context.lineTo(point.x, point.y);
+      context.stroke();
+      return;
+    }
+    if (!cropDraftRef.current) return;
+    const point = getPoint(event);
+    setCropRect({
+      x: Math.min(cropDraftRef.current.x, point.x),
+      y: Math.min(cropDraftRef.current.y, point.y),
+      width: Math.abs(point.x - cropDraftRef.current.x),
+      height: Math.abs(point.y - cropDraftRef.current.y),
+    });
+  }
+
+  function endPointer() {
+    drawingRef.current = false;
+    cropDraftRef.current = null;
+  }
+
+  function handleSave(event) {
+    event.preventDefault();
+    if (mode === "annotate") {
+      onSave(canvasRef.current.toDataURL("image/png"));
+      return;
+    }
+    if (!cropRect || !imageRect || cropRect.width < 4 || cropRect.height < 4) return;
+    const cropX = clamp(cropRect.x, imageRect.x, imageRect.x + imageRect.width);
+    const cropY = clamp(cropRect.y, imageRect.y, imageRect.y + imageRect.height);
+    const cropWidth = clamp(cropRect.width, 4, imageRect.x + imageRect.width - cropX);
+    const cropHeight = clamp(cropRect.height, 4, imageRect.y + imageRect.height - cropY);
+    const sx = ((cropX - imageRect.x) / imageRect.width) * imageRect.naturalWidth;
+    const sy = ((cropY - imageRect.y) / imageRect.height) * imageRect.naturalHeight;
+    const sw = (cropWidth / imageRect.width) * imageRect.naturalWidth;
+    const sh = (cropHeight / imageRect.height) * imageRect.naturalHeight;
+    const image = new Image();
+    image.onload = () => {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = Math.max(8, Math.round(sw));
+      offscreen.height = Math.max(8, Math.round(sh));
+      const context = offscreen.getContext("2d");
+      context.drawImage(image, sx, sy, sw, sh, 0, 0, offscreen.width, offscreen.height);
+      onSave(offscreen.toDataURL("image/png"));
+    };
+    image.src = item.imagePath;
+  }
+
+  return (
+    <Dialog onClose={onClose}>
+      <form onSubmit={handleSave}>
+        <h2>{mode === "crop" ? "画像をクリップ" : "画像に書き込み"}</h2>
+        <div className="image-edit-wrap">
+          <canvas
+            ref={canvasRef}
+            className={mode === "crop" ? "draw-canvas crop-canvas" : "draw-canvas"}
+            width="900"
+            height="520"
+            onPointerDown={startPointer}
+            onPointerMove={movePointer}
+            onPointerUp={endPointer}
+            onPointerLeave={endPointer}
+          />
+          {mode === "crop" && cropRect && (
+            <div
+              className="crop-overlay"
+              style={{
+                left: `${(cropRect.x / 900) * 100}%`,
+                top: `${(cropRect.y / 520) * 100}%`,
+                width: `${(cropRect.width / 900) * 100}%`,
+                height: `${(cropRect.height / 520) * 100}%`,
+              }}
+            />
+          )}
+        </div>
+        <DialogActions onClose={onClose} />
+      </form>
+    </Dialog>
+  );
+}
+
+function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onTitleChange }) {
   const [isZoomed, setIsZoomed] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(item.title || "");
   const hideTimerRef = useRef(null);
 
   function pingChrome() {
@@ -3193,6 +3603,8 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
   useEffect(() => {
     setIsZoomed(false);
     pingChrome();
+    setIsEditingTitle(false);
+    setTitleDraft(item.title || "");
   }, [item.id]);
 
   useEffect(() => () => window.clearTimeout(hideTimerRef.current), []);
@@ -3237,7 +3649,43 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext }) {
         )}
         <figcaption>
           {item.label && <span className="chip">{item.label}</span>}
-          <strong>{item.title || "Untitled"}</strong>
+          {isEditingTitle ? (
+            <input
+              className="lightbox-title-input"
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onBlur={() => {
+                const next = titleDraft.trim();
+                if (next) onTitleChange(next);
+                setIsEditingTitle(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  const next = titleDraft.trim();
+                  if (next) onTitleChange(next);
+                  setIsEditingTitle(false);
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setTitleDraft(item.title || "");
+                  setIsEditingTitle(false);
+                }
+              }}
+              autoFocus
+            />
+          ) : (
+            <strong
+              className="editable-lightbox-title"
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                setTitleDraft(item.title || "");
+                setIsEditingTitle(true);
+              }}
+            >
+              {item.title || "Untitled"}
+            </strong>
+          )}
           {item.content && <span>{item.content}</span>}
         </figcaption>
       </figure>
