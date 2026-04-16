@@ -570,12 +570,12 @@ export default function App() {
   function createQuickItem(type, position = null, overrides = {}) {
     const createdAt = now();
     const templates = {
-      note: { title: "新しいメモ", content: "", widthUnits: 3, heightUnits: 3 },
-      link: { title: "新しいリンク", content: "", url: "https://", widthUnits: 3, heightUnits: 2 },
-      todo: { title: "リスト", content: "・やること", widthUnits: 3, heightUnits: 3 },
-      comment: { title: "Comment", content: "コメントを書く", widthUnits: 3, heightUnits: 2 },
-      column: { title: "Column", content: "見出し\n本文", widthUnits: 4, heightUnits: 5 },
-      table: { title: "Table", content: "項目 | 内容\n--- | ---", widthUnits: 4, heightUnits: 4 },
+      note: { title: "", content: "", widthUnits: 3 },
+      link: { title: "", content: "", url: "", widthUnits: 3 },
+      todo: { title: "リスト", content: "・", widthUnits: 3 },
+      comment: { title: "", content: "", widthUnits: 3 },
+      column: { title: "Column", content: "", widthUnits: 4 },
+      table: { title: "Table", content: " | \n--- | ---\n | ", widthUnits: 4 },
       draw: { title: "Sticker", content: "", widthUnits: 4, heightUnits: 4, sticker: true, angleDeg: 0 },
       "shape-line": {
         title: "Line",
@@ -646,7 +646,7 @@ export default function App() {
         item.id === itemId
           ? {
               ...item,
-              content: `${item.content || ""}${item.content ? "\n" : ""}・新しい項目`,
+              content: `${item.content || ""}${item.content ? "\n" : ""}・`,
               updatedAt: now(),
             }
           : item,
@@ -911,7 +911,7 @@ export default function App() {
       return {
         ...previous,
         items: previous.items.map((item) =>
-          item.id === itemId ? { ...item, widthUnits, heightUnits, updatedAt: now() } : item,
+          item.id === itemId ? { ...item, widthUnits, heightUnits, manualSize: true, updatedAt: now() } : item,
         ),
       };
     });
@@ -1960,7 +1960,9 @@ function buildSurfaceStyle(mode, color, image, fallback) {
 }
 
 function getItemRows(item) {
-  if (item.heightUnits) return item.heightUnits;
+  if (item.manualSize && item.heightUnits) return item.heightUnits;
+  if (item.sticker && item.heightUnits) return item.heightUnits;
+  if (item.type === "board") return item.heightUnits || 3;
   if (item.aspectRatio && (item.type === "image" || item.type === "video")) {
     const widthUnits = item.widthUnits || 4;
     const width = widthUnits * BOARD_UNIT + (widthUnits - 1) * BOARD_GAP;
@@ -1971,8 +1973,28 @@ function getItemRows(item) {
     );
   }
   if (item.type === "image" || item.type === "video") return 4;
-  if (item.type === "board") return 3;
-  return Math.min(6, Math.max(2, Math.ceil(((item.title || "").length + (item.content || "").length) / 80) + 2));
+  if (item.type === "todo") {
+    const lines = (item.content || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return clamp(2 + Math.max(2, lines.length), 2, MAX_CARD_ROWS);
+  }
+  if (item.type === "column") {
+    const lines = `${item.title || ""}\n${item.content || ""}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return clamp(3 + lines.length, 3, MAX_CARD_ROWS);
+  }
+  if (item.type === "table") {
+    const rows = parseTableRows(item.content || "");
+    return clamp(3 + rows.length, 3, MAX_CARD_ROWS);
+  }
+  const combined = `${item.title || ""}\n${item.content || ""}`.trim();
+  const lineCount = combined ? combined.split(/\r?\n/).length : 1;
+  const charEstimate = Math.ceil(combined.length / 28);
+  return clamp(Math.max(2, lineCount + charEstimate), 2, MAX_CARD_ROWS);
 }
 
 function parseTableRows(content) {
@@ -3559,6 +3581,7 @@ function EditableText({ value, className, multiline = false, placeholder = "", d
       style={style}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
+      onFocus={(event) => event.currentTarget.select()}
       onBlur={save}
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
@@ -3580,6 +3603,7 @@ function EditableText({ value, className, multiline = false, placeholder = "", d
       style={style}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
+      onFocus={(event) => event.currentTarget.select()}
       onBlur={save}
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
@@ -3798,7 +3822,7 @@ function ItemCard({
   }
 
   if (item.type === "todo") {
-    const lines = (item.content || "・やること").split(/\r?\n/).filter(Boolean);
+    const lines = ((item.content || "").trim() ? item.content : "・").split(/\r?\n/).filter(Boolean);
     return (
       <article
         className="card todo-card"
@@ -3846,6 +3870,7 @@ function ItemCard({
             ))}
           </div>
         </div>
+        <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
   }
@@ -3869,6 +3894,7 @@ function ItemCard({
             onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
           />
         </div>
+        <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
   }
@@ -3882,7 +3908,6 @@ function ItemCard({
         onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
-          <div className="card-kicker">Column</div>
           <EditableText
             value={item.title}
             className="card-title"
@@ -3909,6 +3934,7 @@ function ItemCard({
             onSave={(nextBody) => onPatchItem(item.id, { content: [headline || "", ...nextBody.split(/\r?\n/)].join("\n").trim() })}
           />
         </div>
+        <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
   }
@@ -3975,6 +4001,7 @@ function ItemCard({
             )}
           </div>
         </div>
+        <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
   }
@@ -4011,6 +4038,7 @@ function ItemCard({
           </a>
         )}
       </div>
+      <ResizeHandle item={item} onResize={onResize} />
     </article>
   );
 }

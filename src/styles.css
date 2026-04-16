@@ -721,6 +721,16 @@ button {
   padding: 14px 14px 8px;
 }
 
+.todo-card .card-body,
+.comment-card .card-body,
+.column-card .card-body,
+.table-card .card-body,
+.card:not(.media-card):not(.board-card):not(.sticker-card) .card-body {
+  height: 100%;
+  overflow: auto;
+  padding-bottom: 34px;
+}
+
 .card-kicker {
   margin-bottom: 7px;
   color: var(--muted);
@@ -830,6 +840,12 @@ button {
 
 .media-card:hover .resize-handle,
 .media-card.caption-visible .resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.card:hover .resize-handle,
+.card:focus-within .resize-handle {
   opacity: 1;
   pointer-events: auto;
 }
