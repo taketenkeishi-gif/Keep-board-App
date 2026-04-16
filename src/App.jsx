@@ -148,6 +148,39 @@ function readImageFile(file) {
   });
 }
 
+function loadImageElement(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to load image"));
+    image.src = source;
+  });
+}
+
+async function optimizeSettingsImageFile(file) {
+  const raw = await readImageFile(file);
+  if (!raw || typeof raw !== "string") return "";
+  if (raw.length <= 2_000_000) return raw;
+
+  try {
+    const image = await loadImageElement(raw);
+    const maxSide = 1920;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+    const width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
+    const height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return raw;
+    context.drawImage(image, 0, 0, width, height);
+    const optimized = canvas.toDataURL("image/jpeg", 0.82);
+    return optimized || raw;
+  } catch {
+    return raw;
+  }
+}
+
 function probeMediaDimensions(source, type = "image") {
   return new Promise((resolve) => {
     if (!source) {
@@ -1896,23 +1929,30 @@ function intersectsSelection(item, selection) {
 }
 
 function buildSurfaceStyle(mode, color, image, fallback) {
-  if (mode === "image" && image) {
+  const base = {
+    backgroundColor: fallback,
+    backgroundImage: "none",
+  };
+
+  if (mode === "solid" && color) {
     return {
-      backgroundColor: fallback,
-      backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.18)), url(${image})`,
+      ...base,
+      backgroundColor: color,
+    };
+  }
+
+  if (mode === "image" && image) {
+    const safeUrl = String(image).replace(/"/g, '\\"');
+    return {
+      ...base,
+      backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.18)), url("${safeUrl}")`,
       backgroundPosition: "center",
       backgroundSize: "cover",
       backgroundRepeat: "no-repeat",
     };
   }
 
-  if (mode === "solid" && color) {
-    return {
-      background: color,
-    };
-  }
-
-  return {};
+  return base;
 }
 
 function getItemRows(item) {
@@ -4153,9 +4193,16 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
   async function handleImageSettingChange(key, event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setDraft((current) => ({ ...current, [key]: "" }));
-    const image = await readImageFile(file);
-    setDraft((current) => ({ ...current, [key]: image }));
+    try {
+      const image = await optimizeSettingsImageFile(file);
+      if (!image) throw new Error("invalid image");
+      setDraft((current) => ({ ...current, [key]: image }));
+    } catch (error) {
+      console.error("Failed to apply settings background image", error);
+      alert("背景画像の読み込みに失敗しました。別の画像でお試しください。");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   return (
