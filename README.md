@@ -1,111 +1,66 @@
-# Keep Board MVP
+# Keep Board
 
-Google Keep風の軽いカードUIと、Milanote風の階層ボード構造を組み合わせたローカルファースト試作です。
+カードを自由配置できるデスクトップボードアプリです。  
+画像・動画・メモ・リンク・サブボードを1つのキャンバスで管理できます。
 
-## 使い方
+## ダウンロード（まずここ）
 
-かんたんな起動方法:
+配布版は **GitHub Releases** から取得してください。  
+`Setup.exe` を実行するだけで、インストール先ディレクトリが自動作成されます。
+
+- Releases: `https://github.com/taketenkeishi-gif/Keep-board-App/releases`
+
+推奨ファイル:
+
+1. `Keep-Board-vX.Y.Z-Setup.exe`（推奨）
+2. `Keep-Board-vX.Y.Z-Installer.msi`
+3. `Keep-Board-vX.Y.Z-Portable.exe`（インストールなし）
+
+## 配布方針
+
+配布ポリシーの詳細は以下を参照してください。
+
+- [Distribution Policy](docs/DISTRIBUTION_POLICY.md)
+
+要点:
+
+1. エンドユーザー向け導線は `Setup.exe` を第一優先にする
+2. `run-built-app.bat` は開発・検証用
+3. ソースZIPを配布導線にしない（実行ファイル同梱ではないため）
+
+## 開発（ローカル）
 
 ```powershell
-.\start.bat
-```
-
-その後、ブラウザで `http://127.0.0.1:5173` を開きます。
-
-手動で起動する場合:
-
-```bash
 npm.cmd install
 npm.cmd run dev
 ```
 
-表示されたローカルURLをブラウザで開きます。`index.html` の直接ダブルクリックではなく、開発サーバー経由で開いてください。データはブラウザの `localStorage` に自動保存されます。
-
-## Windowsアプリとして起動
-
-Tauriを使います。先にRustをインストールしてください。
-
-```powershell
-.\start-desktop.bat
-```
-
-手動で起動する場合:
+## デスクトップ開発（Tauri）
 
 ```powershell
 npm.cmd run tauri:dev
 ```
 
-配布用にビルドする場合:
+## 本番ビルド
 
 ```powershell
 npm.cmd run tauri:build
 ```
 
-ビルド済みアプリを起動する場合:
+## Windows配布物をまとめて作成
 
 ```powershell
-.\run-built-app.bat
+npm.cmd run release:win
 ```
 
-生成物:
+出力先:
 
-- `src-tauri\target\release\keep-board.exe`
-- `src-tauri\target\release\bundle\nsis\Keep Board_0.2.0_x64-setup.exe`
-- `src-tauri\target\release\bundle\msi\Keep Board_0.2.0_x64_en-US.msi`
+- `release/Keep-Board-vX.Y.Z/`
 
-## 実装済み
+## GitHubリリース（自動）
 
-- ボード一覧
-- ボード作成、編集、削除
-- ボード内カード一覧
-- メモ、画像、リンク、サブボード
-- 動画カード作成、表示、削除
-- ブラウザやエクスプローラーからのドラッグ&ドロップ
-- サブボード遷移
-- カードをサブボードへドラッグして移動
-- パンくず
-- ドラッグによる並べ替え
-- サムネイル検索
-- 画像カードの横幅調整
-- 画像、動画カードの縦横サイズ調整
-- 画像クリック時のキャプション表示
-- 画像ダブルクリック時の全画面ビュー
-- 全画面ビューでの前後移動
-- ダークモード
-- 起動時の前回状態復元
-- React
-- dnd-kit
-- Pinterest風masonryレイアウト
-- Tauri設定
+タグ `vX.Y.Z` を push すると、GitHub Actions が Windows/macOS の成果物をビルドして Release に添付します。
 
-## 画像UI
+Workflow:
 
-- 画像、動画カード右下の小さなハンドルをドラッグするとサイズを調整できます。
-- 画像カードをクリックすると、画像下部からタイトルが表示されます。
-- 画像カードをダブルクリックすると全画面表示になります。
-- 全画面表示中は左右ボタン、またはキーボードの左右キーで前後の画像へ移動できます。
-- 検索欄で画像タイトル、メモ、URLを絞り込めます。
-
-## ドラッグ&ドロップ
-
-ボード画面を開いた状態で、外部から以下をドロップできます。
-
-- 画像ファイル: 画像カードになります
-- 動画ファイル: 動画カードになります
-- ブラウザ上の画像: 画像カードになります
-- 動画URL: 動画カードになります
-- URL: リンクカードになります
-- 選択テキスト: メモカードになります
-
-ホーム画面ではなく、カードを追加したいボードの中でドロップしてください。
-
-## サブボード移動
-
-カードをサブボードカードにドラッグすると、そのカードがサブボード内へ移動します。
-
-ボード / サブボードの編集・削除は右クリックメニューから行います。
-
-## 次の候補
-
-- Tauri + SQLite 保存
-- 検索、タグ、インポート、エクスポート
+- `.github/workflows/release.yml`

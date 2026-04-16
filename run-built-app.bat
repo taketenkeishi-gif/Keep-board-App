@@ -1,4 +1,5 @@
 @echo off
+rem Dev/Test helper. End-user download entry is GitHub Releases Setup.exe.
 setlocal
 cd /d "%~dp0"
 
