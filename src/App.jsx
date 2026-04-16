@@ -145,7 +145,11 @@ function normalizeOrders(records) {
 }
 
 function save(nextState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  } catch (error) {
+    console.error("Failed to persist board state. Keeping in-memory state only.", error);
+  }
   return nextState;
 }
 
@@ -228,6 +232,8 @@ export default function App() {
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
   const clipboardRef = useRef([]);
+  const externalDropBusyRef = useRef(false);
+  const lastExternalDropRef = useRef({ signature: "", timestamp: 0 });
 
   const currentBoard = state.boards.find((board) => board.id === currentBoardId) || null;
   const rootBoards = useMemo(
@@ -364,15 +370,45 @@ export default function App() {
       } else if (key === "x") {
         event.preventDefault();
         cutSelectedItems();
-      } else if (key === "v") {
-        event.preventDefault();
-        pasteClipboardItems();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTool, currentBoard, lightboxId, selectedItemIds, state]);
+
+  useEffect(() => {
+    async function handlePaste(event) {
+      if (!currentBoardId) return;
+      const target = event.target;
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (typing || lightboxId) return;
+
+      try {
+        const droppedItems = await createDroppedVisualItems(event.clipboardData);
+        if (droppedItems.length) {
+          event.preventDefault();
+          droppedItems.forEach((droppedItem, index) => {
+            const position = clampPosition(droppedItem, { x: 40 + index * 20, y: 40 + index * 20 });
+            addDroppedItem(droppedItem, position);
+          });
+          return;
+        }
+      } catch (error) {
+        console.error("Paste failed", error);
+      }
+
+      if (clipboardRef.current.length) {
+        event.preventDefault();
+        pasteClipboardItems();
+      }
+    }
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [currentBoardId, lightboxId, state]);
 
   const appShellStyle = buildSurfaceStyle(
     settings.appBackgroundMode,
@@ -1066,9 +1102,10 @@ export default function App() {
 
   function handleExternalDragOver(event) {
     if (document.body.dataset.internalCardDrag === "true") return;
-    if (!currentBoardId || !hasExternalDropData(event.dataTransfer)) return;
     event.preventDefault();
-    setIsExternalDragOver(true);
+    if (currentBoardId && hasExternalDropData(event.dataTransfer)) {
+      setIsExternalDragOver(true);
+    }
   }
 
   function handleExternalDragLeave(event) {
@@ -1077,10 +1114,26 @@ export default function App() {
     }
   }
 
-  async function handleExternalDrop(event) {
+async function handleExternalDrop(event) {
     if (document.body.dataset.internalCardDrag === "true") return;
-    if (!currentBoardId || !hasExternalDropData(event.dataTransfer)) return;
     event.preventDefault();
+    event.stopPropagation();
+    if (!currentBoardId) return;
+    if (!hasExternalDropData(event.dataTransfer)) return;
+    const dropSignature = buildDropSignature(event.dataTransfer);
+    const dropNow = Date.now();
+    if (
+      dropSignature &&
+      lastExternalDropRef.current.signature === dropSignature &&
+      dropNow - lastExternalDropRef.current.timestamp < 900
+    ) {
+      return;
+    }
+    if (dropSignature) {
+      lastExternalDropRef.current = { signature: dropSignature, timestamp: dropNow };
+    }
+    if (externalDropBusyRef.current) return;
+    externalDropBusyRef.current = true;
     setIsExternalDragOver(false);
 
     const boardRoot = document.querySelector("[data-board-root='true']");
@@ -1094,16 +1147,37 @@ export default function App() {
           }
         : null;
 
-    const droppedItems = await createDroppedVisualItems(event.dataTransfer);
-    if (droppedItems.length) {
-      droppedItems.forEach((droppedItem, index) => {
-        const offset = index * 28;
-        const targetPosition = dropPosition ? { x: dropPosition.x + offset, y: dropPosition.y + offset } : null;
-        const clampedPosition = targetPosition ? clampPosition(droppedItem, targetPosition) : null;
-        addDroppedItem(droppedItem, clampedPosition);
-      });
+    try {
+      const droppedItems = await createDroppedVisualItems(event.dataTransfer);
+      if (droppedItems.length) {
+        droppedItems.forEach((droppedItem, index) => {
+          const offset = index * 28;
+          const targetPosition = dropPosition ? { x: dropPosition.x + offset, y: dropPosition.y + offset } : null;
+          const clampedPosition = targetPosition ? clampPosition(droppedItem, targetPosition) : null;
+          addDroppedItem(droppedItem, clampedPosition);
+        });
+      }
+    } catch (error) {
+      console.error("External drop failed", error);
+    } finally {
+      externalDropBusyRef.current = false;
     }
   }
+
+  useEffect(() => {
+    function blockNativeDropNavigation(event) {
+      if (document.body.dataset.internalCardDrag === "true") return;
+      if (!event.dataTransfer) return;
+      event.preventDefault();
+    }
+
+    window.addEventListener("dragover", blockNativeDropNavigation, { capture: true });
+    window.addEventListener("drop", blockNativeDropNavigation, { capture: true });
+    return () => {
+      window.removeEventListener("dragover", blockNativeDropNavigation, { capture: true });
+      window.removeEventListener("drop", blockNativeDropNavigation, { capture: true });
+    };
+  }, []);
 
   return (
     <div
@@ -1894,10 +1968,81 @@ function getDroppedMediaType(file) {
   return "";
 }
 
+function collectDroppedFiles(dataTransfer) {
+  if (!dataTransfer) return [];
+  const directFiles = Array.from(dataTransfer.files || []);
+  const itemFiles = Array.from(dataTransfer.items || [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile?.())
+    .filter(Boolean);
+  const sourceFiles = directFiles.length ? directFiles : itemFiles;
+  const unique = [];
+  const seenStrict = new Set();
+  const seenWeak = new Set();
+
+  sourceFiles.forEach((file) => {
+    const name = (file.name || "").trim().toLowerCase();
+    const type = (file.type || "").trim().toLowerCase();
+    const size = Number(file.size) || 0;
+    const modified = Number(file.lastModified) || 0;
+    const strictKey = `${name}|${type}|${size}|${modified}`;
+    const weakKey = `${type}|${size}`;
+    const weakEligible = size > 0 && (!name || !modified);
+    if (seenStrict.has(strictKey)) return;
+    if (weakEligible && seenWeak.has(weakKey)) return;
+    seenStrict.add(strictKey);
+    if (weakEligible) seenWeak.add(weakKey);
+    unique.push(file);
+  });
+
+  return unique;
+}
+
+function buildDropSignature(dataTransfer) {
+  if (!dataTransfer) return "";
+  const files = collectDroppedFiles(dataTransfer);
+  if (files.length) {
+    return files
+      .map((file) => `${(file.name || "").toLowerCase()}|${file.type || ""}|${file.size || 0}|${file.lastModified || 0}`)
+      .sort()
+      .join("||");
+  }
+  const uri = cleanDroppedUrl(dataTransfer.getData("text/uri-list"));
+  const html = dataTransfer.getData("text/html") || "";
+  const text = dataTransfer.getData("text/plain") || "";
+  return `${uri}|${html.slice(0, 220)}|${text.slice(0, 220)}`;
+}
+
+async function resolveDroppedMediaFile(file) {
+  try {
+    const imagePath = await readImageFile(file);
+    const declaredType = getDroppedMediaType(file);
+    if (declaredType) {
+      const declaredDimensions = await probeMediaDimensions(imagePath, declaredType);
+      if (declaredDimensions.width > 0 && declaredDimensions.height > 0) {
+        return { file, type: declaredType, imagePath, dimensions: declaredDimensions };
+      }
+    }
+
+    const imageDimensions = await probeMediaDimensions(imagePath, "image");
+    if (imageDimensions.width > 0 && imageDimensions.height > 0) {
+      return { file, type: "image", imagePath, dimensions: imageDimensions };
+    }
+
+    const videoDimensions = await probeMediaDimensions(imagePath, "video");
+    if (videoDimensions.width > 0 && videoDimensions.height > 0) {
+      return { file, type: "video", imagePath, dimensions: videoDimensions };
+    }
+  } catch (error) {
+    console.warn("Skipped unreadable dropped file", file?.name || "(unnamed)", error);
+  }
+
+  return null;
+}
+
 function hasExternalDropData(dataTransfer) {
   if (!dataTransfer) return false;
-  const files = Array.from(dataTransfer.files || []);
-  if (files.some((file) => Boolean(getDroppedMediaType(file)))) return true;
+  if (collectDroppedFiles(dataTransfer).length) return true;
   const types = Array.from(dataTransfer.types || []);
   return (
     types.includes("Files") ||
@@ -1908,15 +2053,20 @@ function hasExternalDropData(dataTransfer) {
 }
 
 async function createItemFromDrop(dataTransfer) {
-  const file = Array.from(dataTransfer.files || []).find((candidate) => Boolean(getDroppedMediaType(candidate)));
+  const files = collectDroppedFiles(dataTransfer);
+  let firstMedia = null;
+  for (const file of files) {
+    firstMedia = await resolveDroppedMediaFile(file);
+    if (firstMedia) break;
+  }
 
-  if (file) {
-    const type = getDroppedMediaType(file) || "image";
+  if (firstMedia) {
+    const { file, type, imagePath } = firstMedia;
     return {
       type,
       title: file.name.replace(/\.[^.]+$/, "") || (type === "video" ? "動画" : "画像"),
       content: "",
-      imagePath: await readImageFile(file),
+      imagePath,
       url: "",
       widthUnits: 4,
       heightUnits: 4,
@@ -2019,12 +2169,15 @@ function titleFromUrl(value) {
 }
 
 async function createDroppedVisualItem(dataTransfer) {
-  const file = Array.from(dataTransfer.files || []).find((candidate) => Boolean(getDroppedMediaType(candidate)));
+  const files = collectDroppedFiles(dataTransfer);
+  let firstMedia = null;
+  for (const file of files) {
+    firstMedia = await resolveDroppedMediaFile(file);
+    if (firstMedia) break;
+  }
 
-  if (file) {
-    const type = getDroppedMediaType(file) || "image";
-    const imagePath = await readImageFile(file);
-    const dimensions = await probeMediaDimensions(imagePath, type);
+  if (firstMedia) {
+    const { file, type, imagePath, dimensions } = firstMedia;
     return {
       type,
       title: file.name.replace(/\.[^.]+$/, "") || file.name,
@@ -2070,16 +2223,19 @@ async function createDroppedVisualItem(dataTransfer) {
 }
 
 async function createDroppedVisualItems(dataTransfer) {
-  const files = Array.from(dataTransfer.files || []);
-  const mediaFiles = files
-    .map((file) => ({ file, type: getDroppedMediaType(file) }))
-    .filter((entry) => Boolean(entry.type));
+  const files = collectDroppedFiles(dataTransfer);
+  const mediaFiles = (
+    await Promise.all(
+      files.map(async (file) => {
+        const resolved = await resolveDroppedMediaFile(file);
+        return resolved;
+      }),
+    )
+  ).filter(Boolean);
 
   if (mediaFiles.length) {
-    return Promise.all(
-      mediaFiles.map(async ({ file, type }) => {
-        const imagePath = await readImageFile(file);
-        const dimensions = await probeMediaDimensions(imagePath, type);
+    const mapped = await Promise.all(
+      mediaFiles.map(async ({ file, type, imagePath, dimensions }) => {
         return {
           type,
           title: file.name.replace(/\.[^.]+$/, "") || (type === "video" ? "動画" : "画像"),
@@ -2090,6 +2246,15 @@ async function createDroppedVisualItems(dataTransfer) {
         };
       }),
     );
+    const unique = [];
+    const seen = new Set();
+    for (const item of mapped) {
+      const key = `${item.type}|${item.imagePath}|${item.url || ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(item);
+    }
+    return unique;
   }
 
   const single = await createDroppedVisualItem(dataTransfer);

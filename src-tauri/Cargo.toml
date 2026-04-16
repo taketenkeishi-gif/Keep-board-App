@@ -1,6 +1,6 @@
 [package]
 name = "keep-board"
-version = "0.2.0"
+version = "0.2.1"
 description = "Keep-style hierarchical board app"
 authors = ["Keep Board"]
 edition = "2021"
