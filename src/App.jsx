@@ -1088,6 +1088,10 @@ export default function App() {
 
   function handleExternalDragOver(event) {
     if (document.body.dataset.internalCardDrag === "true") return;
+    if (getSidebarToolFromDataTransfer(event.dataTransfer)) {
+      setIsExternalDragOver(false);
+      return;
+    }
     event.preventDefault();
     if (currentBoardId && hasExternalDropData(event.dataTransfer)) {
       setIsExternalDragOver(true);
@@ -1102,6 +1106,10 @@ export default function App() {
 
 async function handleExternalDrop(event) {
     if (document.body.dataset.internalCardDrag === "true") return;
+    if (getSidebarToolFromDataTransfer(event.dataTransfer)) {
+      setIsExternalDragOver(false);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (!currentBoardId) return;
@@ -1153,6 +1161,7 @@ async function handleExternalDrop(event) {
   useEffect(() => {
     function blockNativeDropNavigation(event) {
       if (document.body.dataset.internalCardDrag === "true") return;
+      if (getSidebarToolFromDataTransfer(event.dataTransfer)) return;
       if (!event.dataTransfer) return;
       event.preventDefault();
     }
@@ -1162,6 +1171,19 @@ async function handleExternalDrop(event) {
     return () => {
       window.removeEventListener("dragover", blockNativeDropNavigation, { capture: true });
       window.removeEventListener("drop", blockNativeDropNavigation, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
+    function clearDropHint() {
+      setIsExternalDragOver(false);
+    }
+
+    window.addEventListener("dragend", clearDropHint);
+    window.addEventListener("drop", clearDropHint);
+    return () => {
+      window.removeEventListener("dragend", clearDropHint);
+      window.removeEventListener("drop", clearDropHint);
     };
   }, []);
 
@@ -2028,6 +2050,7 @@ async function resolveDroppedMediaFile(file) {
 
 function hasExternalDropData(dataTransfer) {
   if (!dataTransfer) return false;
+  if (getSidebarToolFromDataTransfer(dataTransfer)) return false;
   if (collectDroppedFiles(dataTransfer).length) return true;
   const types = Array.from(dataTransfer.types || []);
   return (
@@ -3493,7 +3516,7 @@ function ItemCard({
       <article
         className="card board-card"
         data-board-drop-id={board?.id || ""}
-        onClick={() => board && onOpenBoard(board.id)}
+        onDoubleClick={() => board && onOpenBoard(board.id)}
         onContextMenu={(event) => board && onBoardContextMenu(event, board)}
       >
         {thumbnail && (
@@ -3513,6 +3536,7 @@ function ItemCard({
           </h2>
           <p className="card-content">サブボード</p>
         </div>
+        <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
   }
