@@ -9,18 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            label: windows-x64
-          - os: macos-13
-            label: macos-intel
-          - os: macos-14
-            label: macos-apple-silicon
-    runs-on: ${{ matrix.os }}
+  build_windows:
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,7 +35,55 @@ jobs:
         run: |
           mkdir -p release-assets
           find src-tauri/target/release/bundle -type f \
-            \( -name "*.msi" -o -name "*.exe" -o -name "*.dmg" -o -name "*.app.tar.gz" \) \
+            \( -name "*.msi" -o -name "*.exe" \) \
+            -print -exec cp {} release-assets/ \;
+          cp src-tauri/target/release/keep-board.exe release-assets/keep-board-portable.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+
+  build_macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            label: macos-intel
+            allow_failure: true
+          - os: macos-14
+            label: macos-apple-silicon
+            allow_failure: true
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.allow_failure }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        run: npm run tauri:build
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find src-tauri/target/release/bundle -type f \
+            \( -name "*.dmg" -o -name "*.app.tar.gz" \) \
             -print -exec cp {} release-assets/ \;
 
       - name: Upload artifacts
@@ -56,13 +94,16 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build_windows, build_macos]
+    if: ${{ always() && needs.build_windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          pattern: "*"
+          merge-multiple: true
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
