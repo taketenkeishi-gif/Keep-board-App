@@ -613,25 +613,29 @@ export default function App() {
 
     updateState((previous) => ({
       ...previous,
-      items: [
-        ...previous.items,
-        {
+      items: (() => {
+        const order = previous.items.filter((candidate) => candidate.boardId === currentBoardId).length;
+        const draft = {
           id: createId("item"),
           boardId: currentBoardId,
           linkedBoardId: "",
-          order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length,
+          order,
           createdAt,
           updatedAt: createdAt,
-          x: position?.x,
-          y: position?.y,
           type,
           url: "",
           imagePath: "",
           label: "",
           ...base,
           ...overrides,
-        },
-      ],
+        };
+        const fallbackPosition = {
+          x: 260 + (order % 6) * 26,
+          y: 80 + Math.floor(order / 6) * 26,
+        };
+        const placed = clampPosition(draft, position || fallbackPosition);
+        return [...previous.items, { ...draft, x: placed.x, y: placed.y }];
+      })(),
     }));
   }
 
@@ -1293,7 +1297,7 @@ async function handleExternalDrop(event) {
         </div>
       </header>
 
-      <main className="main">
+      <main className={currentBoard ? "main board-main" : "main"}>
         {currentBoard ? (
           <>
             <section className="board-header">
@@ -1412,7 +1416,7 @@ async function handleExternalDrop(event) {
                   setActiveTool((current) => (current === tool ? null : tool));
                   return;
                 }
-                createQuickItem(tool, { x: 40, y: 40 });
+                createQuickItem(tool);
               }}
             />
             <BoardCanvas
@@ -1947,8 +1951,8 @@ function buildSurfaceStyle(mode, color, image, fallback) {
       ...base,
       backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.18)), url("${safeUrl}")`,
       backgroundPosition: "center",
-      backgroundSize: "cover",
-      backgroundRepeat: "no-repeat",
+      backgroundSize: "cover, contain",
+      backgroundRepeat: "no-repeat, no-repeat",
     };
   }
 
@@ -1969,6 +1973,81 @@ function getItemRows(item) {
   if (item.type === "image" || item.type === "video") return 4;
   if (item.type === "board") return 3;
   return Math.min(6, Math.max(2, Math.ceil(((item.title || "").length + (item.content || "").length) / 80) + 2));
+}
+
+function parseTableRows(content) {
+  const rawRows = (content || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) =>
+      line
+        .split("|")
+        .map((cell) => cell.trim())
+        .filter((_, index, array) => !(array.length === 1 && index === 0 && !array[0])),
+    );
+
+  let rows = rawRows.length ? rawRows : [["項目", "内容"], ["", ""]];
+  if (rows.length === 1) rows = [rows[0], Array(rows[0].length).fill("")];
+
+  const separatorPattern = /^:?-{2,}:?$/;
+  if (
+    rows.length >= 2 &&
+    rows[1].length > 0 &&
+    rows[1].every((cell) => !cell || separatorPattern.test(cell))
+  ) {
+    rows.splice(1, 1);
+  }
+
+  const columnCount = Math.max(2, ...rows.map((row) => row.length));
+  const normalizedRows = rows.map((row) => {
+    const clone = [...row];
+    while (clone.length < columnCount) clone.push("");
+    return clone;
+  });
+
+  return normalizedRows;
+}
+
+function serializeTableRows(rows) {
+  if (!rows.length) {
+    return "項目 | 内容\n--- | ---\n | ";
+  }
+
+  const columnCount = Math.max(2, ...rows.map((row) => row.length));
+  const normalizedRows = rows.map((row) => {
+    const clone = [...row];
+    while (clone.length < columnCount) clone.push("");
+    return clone;
+  });
+
+  const header = normalizedRows[0];
+  const body = normalizedRows.slice(1);
+  const separator = Array(columnCount).fill("---");
+  return [header.join(" | "), separator.join(" | "), ...body.map((row) => row.join(" | "))].join("\n");
+}
+
+function updateTableCellContent(content, rowIndex, cellIndex, value) {
+  const rows = parseTableRows(content);
+  if (!rows[rowIndex] || cellIndex < 0) return content;
+  rows[rowIndex][cellIndex] = value;
+  return serializeTableRows(rows);
+}
+
+function appendTableRowContent(content) {
+  const rows = parseTableRows(content);
+  const columnCount = Math.max(2, ...rows.map((row) => row.length));
+  rows.push(Array(columnCount).fill(""));
+  return serializeTableRows(rows);
+}
+
+function appendTableColumnContent(content) {
+  const rows = parseTableRows(content);
+  const nextColumnIndex = Math.max(0, ...rows.map((row) => row.length));
+  rows.forEach((row, rowIndex) => {
+    row.push(rowIndex === 0 ? `列${nextColumnIndex + 1}` : "");
+  });
+  return serializeTableRows(rows);
 }
 
 const IMAGE_FILE_EXTENSIONS = new Set([
@@ -3164,63 +3243,59 @@ function BoardSidebar({
     }
     return b.count - a.count || a.label.localeCompare(b.label, "ja");
   });
-  const hasContextPanel = Boolean(selectedImageItem || selectedTextItem || selectedItem?.sticker);
-
   return (
     <aside className="board-sidebar">
       <div className="board-sidebar-tab">Tools</div>
       <div className="board-sidebar-panel">
-        {!hasContextPanel && (
-          <section className="sidebar-section">
-            <div className="sidebar-title">メニュー</div>
-            <div className="sidebar-root-grid">
-              <button className={showAddPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleAddPanel}>
-                <span>＋</span>
-                <small>カード</small>
-              </button>
-              <button className={showShapePanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleShapePanel}>
-                <span>✎</span>
-                <small>図形</small>
-              </button>
-              <button className={showLabelPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleLabelPanel}>
-                <span>#</span>
-                <small>ラベル</small>
-              </button>
-            </div>
-            {showLabelPanel && (
-              <div className="label-panel sidebar-subpanel">
-                <label className="field">
-                  <span>並び替え</span>
-                  <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
-                    <option value="count-desc">使用数が多い順</option>
-                    <option value="selected-first">選択中を先頭</option>
-                    <option value="name-asc">名前 昇順</option>
-                    <option value="name-desc">名前 降順</option>
-                  </select>
+        <section className="sidebar-section">
+          <div className="sidebar-title">メニュー</div>
+          <div className="sidebar-root-grid">
+            <button className={showAddPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleAddPanel}>
+              <span>＋</span>
+              <small>カード</small>
+            </button>
+            <button className={showShapePanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleShapePanel}>
+              <span>✎</span>
+              <small>図形</small>
+            </button>
+            <button className={showLabelPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleLabelPanel}>
+              <span>#</span>
+              <small>ラベル</small>
+            </button>
+          </div>
+          {showLabelPanel && (
+            <div className="label-panel sidebar-subpanel">
+              <label className="field">
+                <span>並び替え</span>
+                <select value={labelSortMode} onChange={(event) => onLabelSortModeChange(event.target.value)}>
+                  <option value="count-desc">使用数が多い順</option>
+                  <option value="selected-first">選択中を先頭</option>
+                  <option value="name-asc">名前 昇順</option>
+                  <option value="name-desc">名前 降順</option>
+                </select>
+              </label>
+              {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
+              {sortedLabelStats.map((entry) => (
+                <label className="label-check" key={entry.label}>
+                  <input
+                    type="checkbox"
+                    checked={selectedLabels.includes(entry.label)}
+                    onChange={() => onToggleLabel(entry.label)}
+                  />
+                  <span>{entry.label}</span>
+                  <small>{entry.count}</small>
                 </label>
-                {!labels.length && <p className="sidebar-empty">このボードにはまだラベルがありません。</p>}
-                {sortedLabelStats.map((entry) => (
-                  <label className="label-check" key={entry.label}>
-                    <input
-                      type="checkbox"
-                      checked={selectedLabels.includes(entry.label)}
-                      onChange={() => onToggleLabel(entry.label)}
-                    />
-                    <span>{entry.label}</span>
-                    <small>{entry.count}</small>
-                  </label>
-                ))}
-                {!!selectedLabels.length && (
-                  <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
-                    すべて表示
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
-        )}
+              ))}
+              {!!selectedLabels.length && (
+                <button className="ghost sidebar-clear" type="button" onClick={onClearLabels}>
+                  すべて表示
+                </button>
+              )}
+            </div>
+          )}
+        </section>
 
-        {!hasContextPanel && showAddPanel && (
+        {showAddPanel && (
           <section className="sidebar-section">
             <div className="sidebar-title">カード追加</div>
             <div className="sidebar-tool-grid">
@@ -3245,7 +3320,7 @@ function BoardSidebar({
           </section>
         )}
 
-        {!hasContextPanel && showShapePanel && (
+        {showShapePanel && (
           <section className="sidebar-section">
             <div className="sidebar-title">図形追加</div>
             <div className="sidebar-tool-grid">
@@ -3728,6 +3803,7 @@ function ItemCard({
       <article
         className="card todo-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="todo-head">
@@ -3779,6 +3855,7 @@ function ItemCard({
       <article
         className="card comment-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">Comment</div>
@@ -3802,6 +3879,7 @@ function ItemCard({
       <article
         className="card column-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">Column</div>
@@ -3813,39 +3891,36 @@ function ItemCard({
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
           />
-          {headline && (
-            <EditableText
-              value={headline}
-              className="column-headline"
-              displayAs="p"
-              style={itemTextStyle}
-              onSave={(nextHeadline) => onPatchItem(item.id, { content: [nextHeadline, ...bodyLines].join("\n") })}
-            />
-          )}
-          {bodyLines.length > 0 && (
-            <EditableText
-              value={bodyLines.join("\n")}
-              className="card-content"
-              multiline
-              displayAs="p"
-              style={itemTextStyle}
-              onSave={(nextBody) => onPatchItem(item.id, { content: [headline || "", ...nextBody.split(/\r?\n/)].join("\n").trim() })}
-            />
-          )}
+          <EditableText
+            value={headline || ""}
+            className="column-headline"
+            placeholder="見出し"
+            displayAs="p"
+            style={itemTextStyle}
+            onSave={(nextHeadline) => onPatchItem(item.id, { content: [nextHeadline, ...bodyLines].join("\n").trim() })}
+          />
+          <EditableText
+            value={bodyLines.join("\n")}
+            className="card-content"
+            multiline
+            placeholder="本文"
+            displayAs="p"
+            style={itemTextStyle}
+            onSave={(nextBody) => onPatchItem(item.id, { content: [headline || "", ...nextBody.split(/\r?\n/)].join("\n").trim() })}
+          />
         </div>
       </article>
     );
   }
 
   if (item.type === "table") {
-    const rows = (item.content || "")
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => line.split("|").map((cell) => cell.trim()));
+    const rows = parseTableRows(item.content);
+    const columnCount = Math.max(2, ...rows.map((row) => row.length));
     return (
       <article
         className="card table-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
           <div className="card-kicker">Table</div>
@@ -3857,11 +3932,44 @@ function ItemCard({
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
           />
-          <div className="table-grid">
+          <div className="table-tools">
+            <button
+              className="ghost"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onPatchItem(item.id, { content: appendTableRowContent(item.content || "") });
+              }}
+            >
+              行を追加
+            </button>
+            <button
+              className="ghost"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onPatchItem(item.id, { content: appendTableColumnContent(item.content || "") });
+              }}
+            >
+              列を追加
+            </button>
+          </div>
+          <div className="table-grid" style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}>
             {rows.map((row, rowIndex) =>
               row.map((cell, cellIndex) => (
                 <div className="table-cell" key={`${rowIndex}-${cellIndex}`}>
-                  {cell}
+                  <EditableText
+                    value={cell}
+                    className={rowIndex === 0 ? "table-cell-text table-cell-text-head" : "table-cell-text"}
+                    placeholder={rowIndex === 0 ? `列${cellIndex + 1}` : "値"}
+                    displayAs="span"
+                    style={itemTextStyle}
+                    onSave={(nextCell) =>
+                      onPatchItem(item.id, {
+                        content: updateTableCellContent(item.content || "", rowIndex, cellIndex, nextCell),
+                      })
+                    }
+                  />
                 </div>
               )),
             )}
@@ -3875,6 +3983,7 @@ function ItemCard({
     <article
       className="card"
       onContextMenu={(event) => onItemContextMenu(event, item)}
+      onDoubleClick={() => onTextDoubleClick(item)}
     >
       <div className="card-body">
         <div className="card-kicker">{itemLabels[item.type]}</div>

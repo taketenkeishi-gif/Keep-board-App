@@ -1,66 +1,53 @@
 # Keep Board
 
-カードを自由配置できるデスクトップボードアプリです。  
-画像・動画・メモ・リンク・サブボードを1つのキャンバスで管理できます。
+Milanote 風のボードアプリです。  
+Web 開発起動と Desktop(Tauri) 起動を分離し、Windows 用スクリプトを整理しました。
 
-## ダウンロード（まずここ）
+## 実行スクリプト（Windows）
 
-配布版は **GitHub Releases** から取得してください。  
-`Setup.exe` を実行するだけで、インストール先ディレクトリが自動作成されます。
+- `web-dev.bat`  
+  Web 版の開発サーバーを起動します（Vite / http://127.0.0.1:5173）。
+- `desktop-dev.bat`  
+  Desktop 版の開発起動（`tauri dev`）。
+- `desktop-run-built.bat`  
+  既存のビルド済み Desktop exe を起動します。exe が無い場合のみビルドします。
+- `desktop-build-release.bat`  
+  配布用ビルドを作成し、`release/Keep-Board-vX.Y.Z/` に成果物を出力します。
 
-- Releases: `https://github.com/taketenkeishi-gif/Keep-board-App/releases`
+補足:
 
-推奨ファイル:
+- 旧ファイル `start.bat` / `run-built-app.bat` / `build-release.bat` は互換ラッパーです。  
+  新しい名前の BAT を呼び出します。
+- 実体スクリプトは `scripts/windows/` 配下にあります。
 
-1. `Keep-Board-vX.Y.Z-Setup.exe`（推奨）
-2. `Keep-Board-vX.Y.Z-Installer.msi`
-3. `Keep-Board-vX.Y.Z-Portable.exe`（インストールなし）
+## セットアップ EXE の配布先
 
-## 配布方針
+- Releases 一覧: [GitHub Releases](https://github.com/taketenkeishi-gif/Keep-board-App/releases)
+- 最新 Setup.exe 直リンク（最新版に更新されます）:  
+  [Keep-Board-v0.2.8-Setup.exe](https://github.com/taketenkeishi-gif/Keep-board-App/releases/latest/download/Keep-Board-v0.2.8-Setup.exe)
 
-配布ポリシーの詳細は以下を参照してください。
-
-- [Distribution Policy](docs/DISTRIBUTION_POLICY.md)
-
-要点:
-
-1. エンドユーザー向け導線は `Setup.exe` を第一優先にする
-2. `run-built-app.bat` は開発・検証用
-3. ソースZIPを配布導線にしない（実行ファイル同梱ではないため）
-
-## 開発（ローカル）
+## ローカル開発コマンド
 
 ```powershell
 npm.cmd install
 npm.cmd run dev
 ```
 
-## デスクトップ開発（Tauri）
+Desktop 開発:
 
 ```powershell
 npm.cmd run tauri:dev
 ```
 
-## 本番ビルド
-
-```powershell
-npm.cmd run tauri:build
-```
-
-## Windows配布物をまとめて作成
+配布ビルド:
 
 ```powershell
 npm.cmd run release:win
 ```
 
-出力先:
+## リリース運用
 
-- `release/Keep-Board-vX.Y.Z/`
+1. `desktop-build-release.bat` で成果物作成
+2. `vX.Y.Z` タグを push
+3. GitHub Release に `Setup.exe / MSI / Portable.exe` を添付
 
-## GitHubリリース（自動）
-
-タグ `vX.Y.Z` を push すると、GitHub Actions が Windows/macOS の成果物をビルドして Release に添付します。
-
-Workflow:
-
-- `.github/workflows/release.yml`

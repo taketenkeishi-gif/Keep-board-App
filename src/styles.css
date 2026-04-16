@@ -266,6 +266,10 @@ button {
   padding: 24px;
 }
 
+.main.board-main {
+  padding-left: 248px;
+}
+
 .board-header {
   display: flex;
   gap: 18px;
@@ -576,6 +580,11 @@ button {
     opacity 120ms ease;
 }
 
+.free-board .card:not(.sticker-card) {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px) saturate(1.08);
+}
+
 .card:hover {
   border-color: transparent;
   box-shadow: var(--shadow-strong);
@@ -816,16 +825,25 @@ button {
   backdrop-filter: blur(8px);
   cursor: nwse-resize;
   opacity: 0;
+  pointer-events: none;
 }
 
 .media-card:hover .resize-handle,
 .media-card.caption-visible .resize-handle {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .sticker-card:hover .resize-handle,
 .sticker-card:focus-within .resize-handle {
   opacity: 1;
+  pointer-events: auto;
+}
+
+.board-card:hover .resize-handle,
+.board-card:focus-within .resize-handle {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .external-drop-active .drop-hint {
@@ -1227,6 +1245,12 @@ button {
   margin-top: 14px;
 }
 
+.table-tools {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .table-cell {
   min-height: 38px;
   padding: 10px;
@@ -1234,6 +1258,16 @@ button {
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 84%, transparent);
   font-size: 13px;
+}
+
+.table-cell-text {
+  display: block;
+  min-height: 18px;
+  line-height: 1.35;
+}
+
+.table-cell-text-head {
+  font-weight: 700;
 }
 
 .sticker-line,
@@ -1610,6 +1644,10 @@ button {
     padding: 18px 14px;
   }
 
+  .main.board-main {
+    padding-left: 14px;
+  }
+
   .board-header {
     display: block;
   }
@@ -1636,12 +1674,20 @@ button {
 }
 
 @media (min-width: 681px) and (max-width: 920px) {
+  .main.board-main {
+    padding-left: 18px;
+  }
+
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   }
 }
 
 @media (min-width: 921px) and (max-width: 1180px) {
+  .main.board-main {
+    padding-left: 224px;
+  }
+
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   }
