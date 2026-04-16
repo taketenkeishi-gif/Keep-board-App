@@ -84,21 +84,7 @@ function createInitialState() {
         order: 0,
       },
     ],
-    items: [
-      {
-        id: createId("item"),
-        boardId: firstBoardId,
-        type: "note",
-        title: "メモを追加",
-        content: "追加ボタンからメモ、画像、リンク、サブボードを配置できます。",
-        imagePath: "",
-        url: "",
-        linkedBoardId: "",
-        order: 0,
-        createdAt,
-        updatedAt: createdAt,
-      },
-    ],
+    items: [],
   };
 }
 
