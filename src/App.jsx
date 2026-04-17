@@ -148,6 +148,53 @@ function readImageFile(file) {
   });
 }
 
+async function renderPdfPages(file, maxPages = 80) {
+  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
+  const workerUrl = new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url).toString();
+  if (GlobalWorkerOptions.workerSrc !== workerUrl) {
+    GlobalWorkerOptions.workerSrc = workerUrl;
+  }
+
+  const fileBytes = await file.arrayBuffer();
+  const loadingTask = getDocument({ data: fileBytes });
+  const pdf = await loadingTask.promise;
+  const totalPages = pdf.numPages || 0;
+  const pageLimit = Math.min(totalPages, maxPages);
+  const baseTitle = (file.name || "PDF").replace(/\.[^.]+$/, "") || "PDF";
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const initialViewport = page.getViewport({ scale: 1 });
+    const longestSide = Math.max(initialViewport.width || 1, initialViewport.height || 1);
+    const renderScale = Math.max(0.9, Math.min(2, 1400 / Math.max(longestSide, 1)));
+    const viewport = page.getViewport({ scale: renderScale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(viewport.width));
+    canvas.height = Math.max(1, Math.round(viewport.height));
+    const context = canvas.getContext("2d");
+    if (!context) continue;
+    await page.render({ canvasContext: context, viewport }).promise;
+    const imagePath = canvas.toDataURL("image/jpeg", 0.9);
+    const dimensions = getAspectBasedCardSize(canvas.width, canvas.height, "image");
+    pages.push({
+      type: "image",
+      title: `${baseTitle} p.${pageNumber}`,
+      content: "",
+      imagePath,
+      url: "",
+      ...dimensions,
+    });
+  }
+
+  return {
+    baseTitle,
+    totalPages,
+    renderedPages: pages,
+    truncated: totalPages > pageLimit,
+  };
+}
+
 function loadImageElement(source) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -637,6 +684,107 @@ export default function App() {
         return [...previous.items, { ...draft, x: placed.x, y: placed.y }];
       })(),
     }));
+  }
+
+  async function createPdfSubBoardFromFile(file, anchorPosition = null, stackIndex = 0) {
+    if (!currentBoardId) return;
+    const pdfResult = await renderPdfPages(file);
+    if (!pdfResult.renderedPages.length) return;
+
+    const createdAt = now();
+    const boardTitle =
+      pdfResult.totalPages > 1
+        ? `${pdfResult.baseTitle} (${pdfResult.totalPages} pages${pdfResult.truncated ? ", partial" : ""})`
+        : pdfResult.baseTitle;
+
+    updateState((previous) => {
+      const boardId = createId("board");
+      const boardOrder = previous.boards.filter((board) => board.parentBoardId === currentBoardId).length;
+      const boardItemOrder = previous.items.filter((candidate) => candidate.boardId === currentBoardId).length;
+
+      const boardCardDraft = {
+        type: "board",
+        widthUnits: 2,
+        heightUnits: 3,
+      };
+      const basePosition =
+        anchorPosition ||
+        clampPosition(boardCardDraft, {
+          x: 260 + stackIndex * 24,
+          y: 90 + stackIndex * 24,
+        });
+      const boardCardPosition = clampPosition(boardCardDraft, {
+        x: (basePosition.x || 0) + stackIndex * 24,
+        y: (basePosition.y || 0) + stackIndex * 24,
+      });
+
+      let xCursor = 40;
+      let yCursor = 40;
+      let rowMaxHeight = 0;
+      const boardMaxWidth = BOARD_CANVAS_WIDTH - 40;
+      const pdfItems = pdfResult.renderedPages.map((page, index) => {
+        const pageSize = getItemSize(page);
+        if (xCursor + pageSize.width > boardMaxWidth) {
+          xCursor = 40;
+          yCursor += rowMaxHeight + BOARD_GAP;
+          rowMaxHeight = 0;
+        }
+        const positioned = {
+          id: createId("item"),
+          boardId: boardId,
+          linkedBoardId: "",
+          order: index,
+          createdAt,
+          updatedAt: createdAt,
+          label: "",
+          x: xCursor,
+          y: yCursor,
+          ...page,
+        };
+        xCursor += pageSize.width + BOARD_GAP;
+        rowMaxHeight = Math.max(rowMaxHeight, pageSize.height);
+        return positioned;
+      });
+
+      return {
+        ...previous,
+        boards: [
+          ...previous.boards,
+          {
+            id: boardId,
+            title: boardTitle,
+            parentBoardId: currentBoardId,
+            fontColor: "",
+            fontWeight: "700",
+            thumbnailImage: pdfResult.renderedPages[0]?.imagePath || "",
+            createdAt,
+            updatedAt: createdAt,
+            order: boardOrder,
+          },
+        ],
+        items: [
+          ...previous.items,
+          {
+            id: createId("item"),
+            boardId: currentBoardId,
+            type: "board",
+            title: boardTitle,
+            content: "",
+            imagePath: "",
+            url: "",
+            linkedBoardId: boardId,
+            widthUnits: 2,
+            heightUnits: 3,
+            x: boardCardPosition.x,
+            y: boardCardPosition.y,
+            order: boardItemOrder,
+            createdAt,
+            updatedAt: createdAt,
+          },
+          ...pdfItems,
+        ],
+      };
+    });
   }
 
   function appendTodoItem(itemId) {
@@ -1179,6 +1327,22 @@ async function handleExternalDrop(event) {
         : null;
 
     try {
+      const droppedFiles = collectDroppedFiles(event.dataTransfer);
+      const pdfFiles = droppedFiles.filter(isPdfFile);
+      if (pdfFiles.length) {
+        for (let index = 0; index < pdfFiles.length; index += 1) {
+          const file = pdfFiles[index];
+          const targetPosition = dropPosition
+            ? {
+                x: dropPosition.x + index * 30,
+                y: dropPosition.y + index * 30,
+              }
+            : null;
+          await createPdfSubBoardFromFile(file, targetPosition, index);
+        }
+        return;
+      }
+
       const droppedItems = await createDroppedVisualItems(event.dataTransfer);
       if (droppedItems.length) {
         droppedItems.forEach((droppedItem, index) => {
@@ -2116,6 +2280,12 @@ function getDroppedMediaType(file) {
   if (IMAGE_FILE_EXTENSIONS.has(extension)) return "image";
   if (VIDEO_FILE_EXTENSIONS.has(extension)) return "video";
   return "";
+}
+
+function isPdfFile(file) {
+  if (!file) return false;
+  if ((file.type || "").toLowerCase() === "application/pdf") return true;
+  return getFileExtension(file.name) === "pdf";
 }
 
 function collectDroppedFiles(dataTransfer) {
