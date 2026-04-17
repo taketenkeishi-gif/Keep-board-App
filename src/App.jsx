@@ -1338,31 +1338,32 @@ async function handleExternalDrop(event) {
                   </h1>
                 )}
               </div>
-              <div className="menu">
+              <div className="menu floating-add-menu">
                 <button
-                  className="toolbar-button accent icon-only board-add card-create"
+                  className="toolbar-button accent floating-add-trigger"
                   type="button"
                   onClick={() => setIsAddMenuOpen((value) => !value)}
                   title="カードを追加"
                   aria-label="カードを追加"
                 >
-                  <span>🃏</span>
+                  <span>＋</span>
+                  <b>カード追加</b>
                 </button>
                 <div className="menu-panel" hidden={!isAddMenuOpen}>
                   <button type="button" onClick={() => openAdd("note")}>
-                    メモ
+                    ＋ メモ
                   </button>
                   <button type="button" onClick={() => openAdd("image")}>
-                    画像
+                    ＋ 画像
                   </button>
                   <button type="button" onClick={() => openAdd("video")}>
-                    動画
+                    ＋ 動画
                   </button>
                   <button type="button" onClick={() => openAdd("link")}>
-                    リンク
+                    ＋ リンク
                   </button>
                   <button type="button" onClick={() => openAdd("board")}>
-                    サブボード
+                    ＋ サブボード
                   </button>
                 </div>
               </div>

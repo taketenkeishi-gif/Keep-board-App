@@ -268,6 +268,7 @@ button {
 
 .main.board-main {
   padding-left: 248px;
+  padding-bottom: 110px;
 }
 
 .board-header {
@@ -333,8 +334,8 @@ button {
 
 .board-scale-shell {
   position: relative;
-  background: color-mix(in srgb, var(--paper) 86%, #8fa1b3 14%);
-  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  background: transparent;
+  border: 0;
   border-radius: 10px;
 }
 
@@ -342,9 +343,13 @@ button {
   position: relative;
   min-height: 520px;
   border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  box-shadow: 0 20px 44px rgba(12, 16, 22, 0.2);
+  backdrop-filter: blur(6px) saturate(1.02);
   background:
-    radial-gradient(circle at 1px 1px, var(--board-grid-color) 1.1px, transparent 1.2px) 0 0 / 18px 18px,
-    var(--board-grid-surface);
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--board-grid-color) 88%, transparent) 1px, transparent 1.2px) 0 0 /
+      18px 18px,
+    color-mix(in srgb, var(--surface) 56%, transparent);
 }
 
 .free-board.tool-active::after {
@@ -870,6 +875,43 @@ button {
 .menu {
   position: relative;
   z-index: 20;
+}
+
+.floating-add-menu {
+  position: fixed;
+  top: 96px;
+  right: 24px;
+  z-index: 48;
+}
+
+.floating-add-trigger {
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2aa876, #218661);
+  box-shadow: 0 10px 24px rgba(32, 136, 97, 0.35);
+}
+
+.floating-add-trigger span {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.floating-add-trigger b {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.floating-add-menu .menu-panel {
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 196px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 93%, #0e1219 7%);
+  box-shadow: 0 14px 36px rgba(11, 16, 22, 0.34);
+  backdrop-filter: blur(16px);
 }
 
 .menu-panel {
@@ -1662,6 +1704,7 @@ button {
 
   .main.board-main {
     padding-left: 14px;
+    padding-bottom: 112px;
   }
 
   .board-header {
@@ -1696,6 +1739,17 @@ button {
 
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  .floating-add-menu {
+    top: auto;
+    right: 12px;
+    bottom: 18px;
+  }
+
+  .floating-add-trigger {
+    min-height: 42px;
+    padding: 0 12px;
   }
 }
 
