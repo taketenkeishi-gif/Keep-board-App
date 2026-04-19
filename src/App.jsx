@@ -59,21 +59,12 @@ const itemLabels = {
   comment: "コメント",
   column: "Column",
   table: "Table",
-  "text-sticker": "テキスト",
+  "text-sticker": "Text",
   draw: "Draw",
   "shape-line": "Line",
   "shape-rect": "Rect",
   "shape-circle": "Circle",
 };
-
-const PAGE_PREVIEW_THEMES = [
-  ["#ffb86c", "#ff7a7a"],
-  ["#7ad7c9", "#4f8cff"],
-  ["#ffe27a", "#ff9f5a"],
-  ["#ff9bc2", "#ff6b8f"],
-  ["#9ad89a", "#5bb673"],
-  ["#9fb6ff", "#6f86ff"],
-];
 
 function now() {
   return new Date().toISOString();
@@ -96,16 +87,121 @@ function buildDefaultPage(boardId, order = 0, title = "") {
 }
 
 function getPageDisplayTitle(page, index) {
-  const normalized = `${page?.title || ""}`.trim().replace(/^page\s*/i, "").trim();
-  return normalized || `${index + 1}`;
+  return `${index + 1}`;
 }
 
-function getPagePreviewStyle(index) {
-  const [start, end] = PAGE_PREVIEW_THEMES[index % PAGE_PREVIEW_THEMES.length];
-  return {
-    "--page-preview-start": start,
-    "--page-preview-end": end,
-  };
+function escapeHtml(value = "") {
+  return `${value}`
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function hasRichTextMarkup(value = "") {
+  return /<\/?[a-z][\s\S]*>/i.test(`${value}`);
+}
+
+function richTextToPlainText(value = "") {
+  if (!value) return "";
+  if (!hasRichTextMarkup(value)) return `${value}`;
+  const container = document.createElement("div");
+  container.innerHTML = `${value}`;
+  container.querySelectorAll("br").forEach((node) => node.replaceWith("\n"));
+  container.querySelectorAll("div,p").forEach((node) => {
+    if (node.nextSibling) {
+      node.appendChild(document.createTextNode("\n"));
+    }
+  });
+  return container.textContent || "";
+}
+
+function sanitizeRichText(value = "", { multiline = false } = {}) {
+  const parser = new DOMParser();
+  const documentNode = parser.parseFromString(`<div>${value || ""}</div>`, "text/html");
+  const root = documentNode.body.firstElementChild;
+  if (!root) return "";
+
+  const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "MARK", "BR", "DIV", "P", "SPAN", "FONT"]);
+  const allowedStyles = new Set(["font-weight", "font-style", "text-decoration", "color", "background-color"]);
+
+  function sanitizeNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) return;
+    if (!(node instanceof HTMLElement)) {
+      node.remove();
+      return;
+    }
+
+    const tagName = node.tagName.toUpperCase();
+    if (!allowedTags.has(tagName)) {
+      const parent = node.parentNode;
+      while (node.firstChild) parent?.insertBefore(node.firstChild, node);
+      parent?.removeChild(node);
+      return;
+    }
+
+    [...node.attributes].forEach((attribute) => {
+      if (attribute.name !== "style" && !(tagName === "FONT" && attribute.name === "color")) {
+        node.removeAttribute(attribute.name);
+      }
+    });
+
+    if (tagName === "FONT" && node.getAttribute("color")) {
+      node.style.color = node.getAttribute("color");
+      node.removeAttribute("color");
+    }
+
+    if (node.hasAttribute("style")) {
+      const safeDeclarations = node
+        .getAttribute("style")
+        .split(";")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const [property, rawValue] = entry.split(":");
+          if (!property || !rawValue) return "";
+          const normalizedProperty = property.trim().toLowerCase();
+          if (!allowedStyles.has(normalizedProperty)) return "";
+          const normalizedValue = rawValue.trim();
+          if (/url\s*\(/i.test(normalizedValue)) return "";
+          return `${normalizedProperty}: ${normalizedValue}`;
+        })
+        .filter(Boolean);
+      if (safeDeclarations.length) {
+        node.setAttribute("style", safeDeclarations.join("; "));
+      } else {
+        node.removeAttribute("style");
+      }
+    }
+
+    if (!multiline && (tagName === "DIV" || tagName === "P" || tagName === "BR")) {
+      const parent = node.parentNode;
+      if (!parent) return;
+      if (tagName === "BR") {
+        parent.insertBefore(documentNode.createTextNode(" "), node);
+        parent.removeChild(node);
+        return;
+      }
+      while (node.firstChild) parent.insertBefore(node.firstChild, node);
+      parent.insertBefore(documentNode.createTextNode(" "), node);
+      parent.removeChild(node);
+      return;
+    }
+
+    [...node.childNodes].forEach(sanitizeNode);
+  }
+
+  [...root.childNodes].forEach(sanitizeNode);
+  return root.innerHTML.replace(/<(div|p)><br><\/\1>/gi, "<br>").trim();
+}
+
+function normalizeRichTextValue(value = "", multiline = false) {
+  if (hasRichTextMarkup(value)) {
+    return sanitizeRichText(value, { multiline });
+  }
+  const escaped = escapeHtml(value);
+  return multiline ? escaped.replace(/\r?\n/g, "<br>") : escaped;
 }
 
 function getBoardPages(state, boardId) {
@@ -405,6 +501,8 @@ export default function App() {
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [showShapePanel, setShowShapePanel] = useState(false);
   const [showLabelPanel, setShowLabelPanel] = useState(false);
+  const [activeRichEditor, setActiveRichEditor] = useState(null);
+  const [selectedTableCell, setSelectedTableCell] = useState(null);
   const mediaReplaceRef = useRef({ itemId: null });
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
@@ -469,9 +567,10 @@ export default function App() {
     : null;
   const selectedTextItem =
     selectedItem &&
-    ["note", "link", "todo", "comment", "column", "table", "text-sticker"].includes(selectedItem.type)
+    ["note", "link", "comment", "column", "text-sticker"].includes(selectedItem.type)
       ? selectedItem
       : null;
+  const selectedTableItem = selectedItem?.type === "table" ? selectedItem : null;
   const selectedImageItem =
     boardItems.find(
       (item) => selectedItemIds.includes(item.id) && (item.type === "image" || item.type === "video") && item.imagePath,
@@ -505,6 +604,15 @@ export default function App() {
     const firstPageId = currentBoardId ? getDefaultPageId(state, currentBoardId) : "";
     setCurrentPageId(firstPageId);
   }, [currentBoardId]);
+
+  useEffect(() => {
+    if (!selectedItem || selectedItem.type !== "table") {
+      setSelectedTableCell(null);
+    }
+    if (!selectedItem || !["note", "link", "comment", "column", "text-sticker"].includes(selectedItem.type)) {
+      setActiveRichEditor(null);
+    }
+  }, [selectedItem]);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -794,8 +902,8 @@ export default function App() {
       link: { title: "", content: "", url: "", widthUnits: 3 },
       todo: { title: "リスト", content: "・", widthUnits: 3 },
       comment: { title: "", content: "", widthUnits: 3 },
-      column: { title: "Column", content: "", widthUnits: 4 },
-      table: { title: "Table", content: " | \n--- | ---\n | ", widthUnits: 4 },
+      column: { title: "Column", headline: "", content: "", widthUnits: 4 },
+      table: { title: "Table", content: "項目 | 内容\n--- | ---\n | ", tableHasHeader: true, widthUnits: 4 },
       "text-sticker": {
         title: "",
         content: "テキスト",
@@ -1081,6 +1189,8 @@ export default function App() {
         label: values.label,
         imagePath,
         url: values.url,
+        headline: item?.headline || "",
+        tableHasHeader: type === "table" ? (item?.tableHasHeader ?? true) : item?.tableHasHeader,
         aspectRatio: mediaSize.aspectRatio,
         ...(type === "image" || type === "video" ? mediaSize : {}),
         updatedAt: now(),
@@ -1409,6 +1519,107 @@ export default function App() {
       ...previous,
       items: previous.items.map((item) => (item.id === itemId ? { ...item, ...patch, updatedAt: now() } : item)),
     }));
+  }
+
+  function applyRichTextCommand(command, value = null) {
+    const editorElement = activeRichEditor?.element;
+    if (!(editorElement instanceof HTMLElement)) return;
+    editorElement.focus({ preventScroll: true });
+    document.execCommand("styleWithCSS", false, true);
+    document.execCommand(command, false, value);
+  }
+
+  function updateTableItem(itemId, updater) {
+    const target = boardItems.find((item) => item.id === itemId && item.type === "table");
+    if (!target) return;
+    const rows = parseTableRows(target.content || "");
+    const next = updater(rows.map((row) => [...row]), target);
+    if (!next) return;
+    patchItem(itemId, next);
+  }
+
+  function updateSelectedTableCellValue(nextValue) {
+    if (!selectedTableItem || !selectedTableCell) return;
+    const { rowIndex, cellIndex } = selectedTableCell;
+    patchItem(selectedTableItem.id, {
+      content: updateTableCellContent(selectedTableItem.content || "", rowIndex, cellIndex, nextValue),
+    });
+  }
+
+  function addTableRow(itemId, insertAfterRowIndex = null) {
+    updateTableItem(itemId, (rows) => {
+      const columnCount = Math.max(2, ...rows.map((row) => row.length));
+      const insertIndex = insertAfterRowIndex === null ? rows.length : clamp(insertAfterRowIndex + 1, 1, rows.length);
+      rows.splice(insertIndex, 0, Array(columnCount).fill(""));
+      return { content: serializeTableRows(rows) };
+    });
+  }
+
+  function addTableColumn(itemId, insertAfterCellIndex = null) {
+    updateTableItem(itemId, (rows) => {
+      const columnCount = Math.max(2, ...rows.map((row) => row.length));
+      const insertIndex = insertAfterCellIndex === null ? columnCount : clamp(insertAfterCellIndex + 1, 0, columnCount);
+      rows.forEach((row, rowIndex) => {
+        row.splice(insertIndex, 0, rowIndex === 0 ? `列${insertIndex + 1}` : "");
+      });
+      return { content: serializeTableRows(rows) };
+    });
+  }
+
+  function deleteTableRow(itemId, rowIndex) {
+    updateTableItem(itemId, (rows, target) => {
+      const firstEditableRow = target.tableHasHeader === false ? 0 : 1;
+      if (rowIndex < firstEditableRow || rowIndex >= rows.length || rows.length <= firstEditableRow + 1) return null;
+      rows.splice(rowIndex, 1);
+      return { content: serializeTableRows(rows) };
+    });
+    setSelectedTableCell((current) =>
+      current && current.itemId === itemId && current.rowIndex === rowIndex ? null : current,
+    );
+  }
+
+  function deleteTableColumn(itemId, cellIndex) {
+    updateTableItem(itemId, (rows) => {
+      const columnCount = Math.max(2, ...rows.map((row) => row.length));
+      if (cellIndex < 0 || cellIndex >= columnCount || columnCount <= 2) return null;
+      rows.forEach((row) => row.splice(cellIndex, 1));
+      return { content: serializeTableRows(rows) };
+    });
+    setSelectedTableCell((current) =>
+      current && current.itemId === itemId && current.cellIndex === cellIndex ? null : current,
+    );
+  }
+
+  function moveTableRow(itemId, rowIndex, direction) {
+    updateTableItem(itemId, (rows, target) => {
+      const firstEditableRow = target.tableHasHeader === false ? 0 : 1;
+      const nextIndex = rowIndex + direction;
+      if (rowIndex < firstEditableRow || nextIndex < firstEditableRow || nextIndex >= rows.length) return null;
+      [rows[rowIndex], rows[nextIndex]] = [rows[nextIndex], rows[rowIndex]];
+      return { content: serializeTableRows(rows) };
+    });
+    setSelectedTableCell((current) =>
+      current && current.itemId === itemId && current.rowIndex === rowIndex
+        ? { ...current, rowIndex: current.rowIndex + direction }
+        : current,
+    );
+  }
+
+  function moveTableColumn(itemId, cellIndex, direction) {
+    updateTableItem(itemId, (rows) => {
+      const columnCount = Math.max(2, ...rows.map((row) => row.length));
+      const nextIndex = cellIndex + direction;
+      if (cellIndex < 0 || nextIndex < 0 || nextIndex >= columnCount) return null;
+      rows.forEach((row) => {
+        [row[cellIndex], row[nextIndex]] = [row[nextIndex], row[cellIndex]];
+      });
+      return { content: serializeTableRows(rows) };
+    });
+    setSelectedTableCell((current) =>
+      current && current.itemId === itemId && current.cellIndex === cellIndex
+        ? { ...current, cellIndex: current.cellIndex + direction }
+        : current,
+    );
   }
 
   function duplicateSelectedItems(itemIds = selectedItemIds) {
@@ -1819,9 +2030,6 @@ async function handleExternalDrop(event) {
                             }}
                             title={getPageDisplayTitle(page, index)}
                           >
-                            <span className="page-thumb-mini" style={getPagePreviewStyle(index)}>
-                              <span className="page-thumb-art" />
-                            </span>
                             <span className="page-tab-label">{getPageDisplayTitle(page, index)}</span>
                           </button>
                         );
@@ -1874,7 +2082,7 @@ async function handleExternalDrop(event) {
                   <button type="button" onClick={() => openAdd("link")}>
                     ＋ リンク
                   </button>
-                  <button type="button" onClick={() => createQuickItem("note", null, { content: "テキスト" })}>
+                  <button type="button" onClick={() => createQuickItem("text-sticker")}>
                     ＋ テキスト
                   </button>
                   <button type="button" onClick={() => openAdd("board")}>
@@ -1892,7 +2100,10 @@ async function handleExternalDrop(event) {
               selectedLabels={selectedLabels}
               selectedItem={selectedItem}
               selectedTextItem={selectedTextItem}
+              selectedTableItem={selectedTableItem}
+              selectedTableCell={selectedTableCell}
               activeTool={activeTool}
+              activeRichEditor={activeRichEditor}
               selectedImageItem={selectedImageItem}
               showAddPanel={showAddPanel}
               showShapePanel={showShapePanel}
@@ -1909,6 +2120,7 @@ async function handleExternalDrop(event) {
               onLabelSortModeChange={setLabelSortMode}
               onToggleLabelPanel={() => setShowLabelPanel((current) => !current)}
               onStyleChange={(item, patch) => patchItem(item.id, patch)}
+              onTextCommand={applyRichTextCommand}
               onImageAction={(action, item) => {
                 if (action === "crop") {
                   setDialog({ kind: "imageEdit", mode: "crop", item });
@@ -1918,6 +2130,16 @@ async function handleExternalDrop(event) {
                   setDialog({ kind: "drawEdit", item });
                 }
               }}
+              onUpdateTableCell={(itemId, rowIndex, cellIndex, value) =>
+                patchItem(itemId, { content: updateTableCellContent(boardItems.find((item) => item.id === itemId)?.content || "", rowIndex, cellIndex, value) })
+              }
+              onAddTableRow={addTableRow}
+              onAddTableColumn={addTableColumn}
+              onDeleteTableRow={deleteTableRow}
+              onDeleteTableColumn={deleteTableColumn}
+              onMoveTableRow={moveTableRow}
+              onMoveTableColumn={moveTableColumn}
+              onToggleTableHeader={(itemId, enabled) => patchItem(itemId, { tableHasHeader: enabled })}
               onPick={(tool) => {
                 if (tool === "image" || tool === "video" || tool === "link" || tool === "note") {
                   setDialog({ kind: "item", type: tool });
@@ -1943,6 +2165,7 @@ async function handleExternalDrop(event) {
               boards={state.boards}
               zoom={settings.boardZoom}
               selectedIds={selectedItemIds}
+              selectedTableCell={selectedTableCell}
               onSelectedIdsChange={setSelectedItemIds}
               onZoomChange={(boardZoom) => setSettings((current) => ({ ...current, boardZoom }))}
               getBoardThumbnail={getBoardThumbnail}
@@ -1961,6 +2184,8 @@ async function handleExternalDrop(event) {
               onToggleCaption={setActiveCaptionId}
               onOpenLightbox={setLightboxId}
               onItemContextMenu={openItemContextMenu}
+              onActivateRichEditor={(payload) => setActiveRichEditor(payload)}
+              onSelectTableCell={setSelectedTableCell}
               onMove={moveItemsOnBoard}
               onMoveToBoard={moveItemToBoard}
               activeTool={activeTool}
@@ -2187,7 +2412,7 @@ function matchesSearch(record, query) {
   if (!normalized) return true;
   return [record.title, record.content, record.url, record.label]
     .filter(Boolean)
-    .some((value) => value.toLowerCase().includes(normalized));
+    .some((value) => richTextToPlainText(value).toLowerCase().includes(normalized));
 }
 
 function matchesLabel(item, selectedLabels) {
@@ -2502,7 +2727,7 @@ function getItemRows(item) {
     return clamp(2 + Math.max(2, lines.length), 2, MAX_CARD_ROWS);
   }
   if (item.type === "column") {
-    const lines = `${item.title || ""}\n${item.content || ""}`
+    const lines = `${richTextToPlainText(item.title || "")}\n${richTextToPlainText(item.headline || "")}\n${richTextToPlainText(item.content || "")}`
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -2512,7 +2737,7 @@ function getItemRows(item) {
     const rows = parseTableRows(item.content || "");
     return clamp(3 + rows.length, 3, MAX_CARD_ROWS);
   }
-  const combined = `${item.title || ""}\n${item.content || ""}`.trim();
+  const combined = `${richTextToPlainText(item.title || "")}\n${richTextToPlainText(item.content || "")}`.trim();
   const lineCount = combined ? combined.split(/\r?\n/).length : 1;
   const charEstimate = Math.ceil(combined.length / 28);
   return clamp(Math.max(2, lineCount + charEstimate), 2, MAX_CARD_ROWS);
@@ -2997,6 +3222,9 @@ function BoardCanvas({
   onToggleCaption,
   onOpenLightbox,
   onItemContextMenu,
+  onActivateRichEditor,
+  selectedTableCell,
+  onSelectTableCell,
   onMove,
   onMoveToBoard,
   activeTool,
@@ -3621,6 +3849,10 @@ function BoardCanvas({
               onToggleCaption={onToggleCaption}
               onOpenLightbox={onOpenLightbox}
               onItemContextMenu={onItemContextMenu}
+              onActivateRichEditor={onActivateRichEditor}
+              selectedTableCell={selectedTableCell}
+              onSelectTableCell={onSelectTableCell}
+              onSelectItem={onSelectedIdsChange}
               onPointerDown={handleCardPointerDown}
               onTextDoubleClick={onTextDoubleClick}
             />
@@ -3686,6 +3918,10 @@ function FreeCard({
   onToggleCaption,
   onOpenLightbox,
   onItemContextMenu,
+  onActivateRichEditor,
+  selectedTableCell,
+  onSelectTableCell,
+  onSelectItem,
   onPointerDown,
   onTextDoubleClick,
 }) {
@@ -3735,6 +3971,10 @@ function FreeCard({
         onToggleCaption={onToggleCaption}
         onOpenLightbox={onOpenLightbox}
         onItemContextMenu={onItemContextMenu}
+        onActivateRichEditor={onActivateRichEditor}
+        selectedTableCell={selectedTableCell}
+        onSelectTableCell={onSelectTableCell}
+        onSelectItem={onSelectItem}
         onTextDoubleClick={onTextDoubleClick}
       />
     </div>
@@ -3756,7 +3996,10 @@ function BoardSidebar({
   selectedLabels,
   selectedItem,
   selectedTextItem,
+  selectedTableItem,
+  selectedTableCell,
   activeTool,
+  activeRichEditor,
   selectedImageItem,
   showAddPanel,
   showShapePanel,
@@ -3770,7 +4013,16 @@ function BoardSidebar({
   onLabelSortModeChange,
   onToggleLabelPanel,
   onStyleChange,
+  onTextCommand,
   onImageAction,
+  onUpdateTableCell,
+  onAddTableRow,
+  onAddTableColumn,
+  onDeleteTableRow,
+  onDeleteTableColumn,
+  onMoveTableRow,
+  onMoveTableColumn,
+  onToggleTableHeader,
 }) {
   const addTools = [
     { id: "note", label: "Note", icon: "📝" },
@@ -3780,7 +4032,7 @@ function BoardSidebar({
     { id: "comment", label: "Comment", icon: "💬" },
     { id: "column", label: "Column", icon: "▤" },
     { id: "table", label: "Table", icon: "▦" },
-    { id: "text-sticker", label: "Text Sticker", icon: "T" },
+    { id: "text-sticker", label: "Text", icon: "T" },
     { id: "board", label: "Board", icon: "◫" },
   ];
   const shapeTools = [
@@ -3800,6 +4052,16 @@ function BoardSidebar({
     }
     return b.count - a.count || a.label.localeCompare(b.label, "ja");
   });
+  const tableRows = selectedTableItem ? parseTableRows(selectedTableItem.content || "") : [];
+  const selectedCellValue =
+    selectedTableCell && selectedTableCell.itemId === selectedTableItem?.id
+      ? tableRows[selectedTableCell.rowIndex]?.[selectedTableCell.cellIndex] || ""
+      : "";
+  const selectedColumnName =
+    selectedTableCell && selectedTableCell.itemId === selectedTableItem?.id
+      ? tableRows[0]?.[selectedTableCell.cellIndex] || ""
+      : "";
+
   return (
     <aside className="board-sidebar">
       <div className="board-sidebar-tab">Tools</div>
@@ -3921,103 +4183,135 @@ function BoardSidebar({
         {selectedTextItem && (
           <section className="sidebar-section">
             <div className="sidebar-title">テキストツール</div>
-            <label className="field">
-              <span>フォント</span>
-              <select
-                value={selectedTextItem.fontFamily || "inherit"}
-                onChange={(event) =>
-                  onStyleChange(selectedTextItem, {
-                    fontFamily: event.target.value === "inherit" ? "" : event.target.value,
-                  })
-                }
-              >
-                <option value="inherit">標準</option>
-                <option value='"Yu Gothic UI", "Noto Sans JP", sans-serif'>ゴシック</option>
-                <option value='"Hiragino Mincho ProN", "Yu Mincho", serif'>明朝</option>
-                <option value='"Arial Black", "Avenir Next", sans-serif'>見出し</option>
-                <option value='"Consolas", "SF Mono", monospace'>等幅</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>文字サイズ: {selectedTextItem.fontSize || 16}px</span>
-              <input
-                type="range"
-                min="10"
-                max="96"
-                value={selectedTextItem.fontSize || 16}
-                onChange={(event) => onStyleChange(selectedTextItem, { fontSize: Number(event.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>行間: {(selectedTextItem.lineHeight || 1.45).toFixed(2)}</span>
-              <input
-                type="range"
-                min="1"
-                max="2.4"
-                step="0.05"
-                value={selectedTextItem.lineHeight || 1.45}
-                onChange={(event) => onStyleChange(selectedTextItem, { lineHeight: Number(event.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>字間: {selectedTextItem.letterSpacing || 0}px</span>
-              <input
-                type="range"
-                min="-2"
-                max="12"
-                step="0.2"
-                value={selectedTextItem.letterSpacing || 0}
-                onChange={(event) => onStyleChange(selectedTextItem, { letterSpacing: Number(event.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>文字色</span>
-              <input
-                type="color"
-                value={selectedTextItem.textColor || "#232323"}
-                onChange={(event) => onStyleChange(selectedTextItem, { textColor: event.target.value })}
-              />
-            </label>
             <div className="sidebar-text-tools">
               <button
-                className={selectedTextItem.fontWeight === "700" ? "tool-button compact active" : "tool-button compact"}
+                className="tool-button compact"
                 type="button"
-                onClick={() => onStyleChange(selectedTextItem, { fontWeight: selectedTextItem.fontWeight === "700" ? "400" : "700" })}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onTextCommand("bold");
+                }}
               >
                 <span>B</span>
               </button>
               <button
-                className={selectedTextItem.fontStyle === "italic" ? "tool-button compact active" : "tool-button compact"}
+                className="tool-button compact"
                 type="button"
-                onClick={() => onStyleChange(selectedTextItem, { fontStyle: selectedTextItem.fontStyle === "italic" ? "normal" : "italic" })}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onTextCommand("italic");
+                }}
               >
                 <span>I</span>
               </button>
               <button
-                className={
-                  selectedTextItem.textDecoration === "underline" ? "tool-button compact active" : "tool-button compact"
-                }
+                className="tool-button compact"
                 type="button"
-                onClick={() =>
-                  onStyleChange(selectedTextItem, {
-                    textDecoration: selectedTextItem.textDecoration === "underline" ? "none" : "underline",
-                  })
-                }
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onTextCommand("underline");
+                }}
               >
                 <span>U</span>
               </button>
-            </div>
-            <label className="field">
-              <span>寄せ</span>
-              <select
-                value={selectedTextItem.textAlign || "left"}
-                onChange={(event) => onStyleChange(selectedTextItem, { textAlign: event.target.value })}
+              <button
+                className="tool-button compact"
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onTextCommand("hiliteColor", "#fff59d");
+                }}
               >
-                <option value="left">左</option>
-                <option value="center">中央</option>
-                <option value="right">右</option>
+                <span>M</span>
+              </button>
+              <button
+                className="tool-button compact"
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onTextCommand("removeFormat");
+                }}
+              >
+                <span>×</span>
+              </button>
+            </div>
+            <p className="sidebar-empty">
+              {activeRichEditor ? "文字を選択して装飾を適用します。" : "文字をダブルクリックして編集を開始します。"}
+            </p>
+          </section>
+        )}
+
+        {selectedTableItem && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">テーブル編集</div>
+            <label className="field">
+              <span>ヘッダー</span>
+              <select
+                value={selectedTableItem.tableHasHeader === false ? "off" : "on"}
+                onChange={(event) => onToggleTableHeader(selectedTableItem.id, event.target.value === "on")}
+              >
+                <option value="on">ON</option>
+                <option value="off">OFF</option>
               </select>
             </label>
+            <div className="sidebar-root-grid">
+              <button className="tool-button" type="button" onClick={() => onAddTableRow(selectedTableItem.id, selectedTableCell?.rowIndex)}>
+                <span>＋</span>
+                <small>行を追加</small>
+              </button>
+              <button className="tool-button" type="button" onClick={() => onAddTableColumn(selectedTableItem.id, selectedTableCell?.cellIndex)}>
+                <span>＋</span>
+                <small>列を追加</small>
+              </button>
+            </div>
+            {selectedTableCell ? (
+              <>
+                <label className="field">
+                  <span>
+                    セル編集 {selectedTableCell.rowIndex + 1}-{selectedTableCell.cellIndex + 1}
+                  </span>
+                  <textarea
+                    value={selectedCellValue}
+                    onChange={(event) => onUpdateTableCell(selectedTableItem.id, selectedTableCell.rowIndex, selectedTableCell.cellIndex, event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>列名</span>
+                  <input
+                    value={selectedColumnName}
+                    onChange={(event) => onUpdateTableCell(selectedTableItem.id, 0, selectedTableCell.cellIndex, event.target.value)}
+                  />
+                </label>
+                <div className="sidebar-root-grid">
+                  <button className="tool-button" type="button" onClick={() => onMoveTableRow(selectedTableItem.id, selectedTableCell.rowIndex, -1)}>
+                    <span>↑</span>
+                    <small>行を上へ</small>
+                  </button>
+                  <button className="tool-button" type="button" onClick={() => onMoveTableRow(selectedTableItem.id, selectedTableCell.rowIndex, 1)}>
+                    <span>↓</span>
+                    <small>行を下へ</small>
+                  </button>
+                  <button className="tool-button" type="button" onClick={() => onMoveTableColumn(selectedTableItem.id, selectedTableCell.cellIndex, -1)}>
+                    <span>←</span>
+                    <small>列を左へ</small>
+                  </button>
+                  <button className="tool-button" type="button" onClick={() => onMoveTableColumn(selectedTableItem.id, selectedTableCell.cellIndex, 1)}>
+                    <span>→</span>
+                    <small>列を右へ</small>
+                  </button>
+                  <button className="tool-button" type="button" onClick={() => onDeleteTableRow(selectedTableItem.id, selectedTableCell.rowIndex)}>
+                    <span>−</span>
+                    <small>行を削除</small>
+                  </button>
+                  <button className="tool-button" type="button" onClick={() => onDeleteTableColumn(selectedTableItem.id, selectedTableCell.cellIndex)}>
+                    <span>−</span>
+                    <small>列を削除</small>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="sidebar-empty">セルを選択すると編集UIが表示されます。</p>
+            )}
           </section>
         )}
 
@@ -4112,7 +4406,7 @@ function BoardCard({ board, thumbnail, count, onOpen, onContextMenu }) {
           <img src={thumbnail} alt="" />
         </div>
       )}
-      <div className="card-body">
+      <div className={thumbnail ? "card-body board-card-body overlay" : "card-body board-card-body"}>
         <h2
           className="card-title board-title"
           style={{
@@ -4122,7 +4416,7 @@ function BoardCard({ board, thumbnail, count, onOpen, onContextMenu }) {
         >
           {board.title}
         </h2>
-        <p className="card-content">{count} 件のカード</p>
+        <p className="card-content board-card-copy">{count} 件のカード</p>
       </div>
     </article>
   );
@@ -4225,6 +4519,10 @@ function ItemCard({
   onToggleCaption,
   onOpenLightbox,
   onItemContextMenu,
+  onActivateRichEditor,
+  selectedTableCell,
+  onSelectTableCell,
+  onSelectItem,
   onTextDoubleClick,
 }) {
   const itemTextStyle = {
@@ -4238,8 +4536,12 @@ function ItemCard({
     lineHeight: item.lineHeight || undefined,
     letterSpacing: Number.isFinite(item.letterSpacing) ? `${item.letterSpacing}px` : undefined,
   };
-  const plainTextCardTypes = new Set(["note", "link", "text-sticker"]);
+  const plainTextCardTypes = new Set(["text-sticker"]);
   const isPlainTextCard = plainTextCardTypes.has(item.type);
+
+  function activateEditor(field, element) {
+    onActivateRichEditor?.({ itemId: item.id, field, element });
+  }
 
   if (item.type === "board") {
     return (
@@ -4253,7 +4555,7 @@ function ItemCard({
             <img src={thumbnail} alt="" />
           </div>
         )}
-        <div className="card-body">
+        <div className={thumbnail ? "card-body board-card-body overlay" : "card-body board-card-body"}>
           {!thumbnail && (
             <button
               className="ghost board-open-ghost"
@@ -4266,23 +4568,17 @@ function ItemCard({
               ダブルクリックで開く
             </button>
           )}
-          <EditableText
-            value={board?.title || item.title}
+          <h2
             className="card-title board-title"
-            placeholder="サブボード名"
-            displayAs="h2"
             style={{
               ...itemTextStyle,
               color: board?.fontColor || item.textColor || undefined,
               fontWeight: board?.fontWeight || item.fontWeight || undefined,
             }}
-            onSave={(nextTitle) => {
-              const trimmed = nextTitle.trim();
-              if (!trimmed || !board) return;
-              onUpdateBoardTitle(board.id, trimmed);
-            }}
-          />
-          <p className="card-content">サブボード</p>
+          >
+            {board?.title || item.title}
+          </h2>
+          <p className="card-content board-card-copy">サブボード</p>
         </div>
         <ResizeHandle item={item} onResize={onResize} />
       </article>
@@ -4487,30 +4783,31 @@ function ItemCard({
   if (item.type === "note" || item.type === "text-sticker") {
     return (
       <article
-        className="card plain-card text-card"
+        className={item.type === "text-sticker" ? "card plain-card text-card" : "card note-card"}
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
-        <div className="card-body plain-card-body">
+        <div className={item.type === "text-sticker" ? "card-body plain-card-body" : "card-body"}>
           {!!item.label && <span className="chip inline-chip">{item.label}</span>}
           {!!item.title?.trim() && (
-            <EditableText
+            <RichTextEditable
               value={item.title}
-              className="card-title plain-card-title"
+              className={item.type === "text-sticker" ? "card-title plain-card-title" : "card-title"}
               placeholder="タイトル"
               displayAs="h2"
               style={itemTextStyle}
               onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+              onActivate={(element) => activateEditor("title", element)}
             />
           )}
-          <EditableText
+          <RichTextEditable
             value={item.content}
-            className="text-sticker-content"
+            className={item.type === "text-sticker" ? "text-sticker-content" : "card-content"}
             placeholder="テキスト"
             multiline
             displayAs="p"
             style={itemTextStyle}
             onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+            onActivate={(element) => activateEditor("content", element)}
           />
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -4523,11 +4820,9 @@ function ItemCard({
       <article
         className="card comment-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
-          <div className="card-kicker">Comment</div>
-          <EditableText
+          <RichTextEditable
             value={item.content}
             className="card-content"
             placeholder="コメントを書く"
@@ -4535,6 +4830,7 @@ function ItemCard({
             displayAs="p"
             style={itemTextStyle}
             onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+            onActivate={(element) => activateEditor("content", element)}
           />
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -4543,38 +4839,39 @@ function ItemCard({
   }
 
   if (item.type === "column") {
-    const [headline, ...bodyLines] = (item.content || "").split(/\r?\n/);
     return (
       <article
         className="card column-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
-          <EditableText
+          <RichTextEditable
             value={item.title}
             className="card-title"
             placeholder="Column"
             displayAs="h2"
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            onActivate={(element) => activateEditor("title", element)}
           />
-          <EditableText
-            value={headline || ""}
+          <RichTextEditable
+            value={item.headline || ""}
             className="column-headline"
             placeholder="見出し"
             displayAs="p"
             style={itemTextStyle}
-            onSave={(nextHeadline) => onPatchItem(item.id, { content: [nextHeadline, ...bodyLines].join("\n").trim() })}
+            onSave={(nextHeadline) => onPatchItem(item.id, { headline: nextHeadline })}
+            onActivate={(element) => activateEditor("headline", element)}
           />
-          <EditableText
-            value={bodyLines.join("\n")}
+          <RichTextEditable
+            value={item.content}
             className="card-content"
             multiline
             placeholder="本文"
             displayAs="p"
             style={itemTextStyle}
-            onSave={(nextBody) => onPatchItem(item.id, { content: [headline || "", ...nextBody.split(/\r?\n/)].join("\n").trim() })}
+            onSave={(nextBody) => onPatchItem(item.id, { content: nextBody })}
+            onActivate={(element) => activateEditor("content", element)}
           />
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -4589,57 +4886,44 @@ function ItemCard({
       <article
         className="card table-card"
         onContextMenu={(event) => onItemContextMenu(event, item)}
-        onDoubleClick={() => onTextDoubleClick(item)}
       >
         <div className="card-body">
-          <div className="card-kicker">Table</div>
-          <EditableText
+          <RichTextEditable
             value={item.title}
             className="card-title"
             placeholder="Table"
             displayAs="h2"
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            onActivate={(element) => activateEditor("title", element)}
           />
-          <div className="table-tools">
-            <button
-              className="ghost"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPatchItem(item.id, { content: appendTableRowContent(item.content || "") });
-              }}
-            >
-              行を追加
-            </button>
-            <button
-              className="ghost"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPatchItem(item.id, { content: appendTableColumnContent(item.content || "") });
-              }}
-            >
-              列を追加
-            </button>
-          </div>
           <div className="table-grid" style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}>
             {rows.map((row, rowIndex) =>
               row.map((cell, cellIndex) => (
-                <div className="table-cell" key={`${rowIndex}-${cellIndex}`}>
-                  <EditableText
-                    value={cell}
-                    className={rowIndex === 0 ? "table-cell-text table-cell-text-head" : "table-cell-text"}
-                    placeholder={rowIndex === 0 ? `列${cellIndex + 1}` : "値"}
-                    displayAs="span"
-                    style={itemTextStyle}
-                    onSave={(nextCell) =>
-                      onPatchItem(item.id, {
-                        content: updateTableCellContent(item.content || "", rowIndex, cellIndex, nextCell),
-                      })
-                    }
-                  />
-                </div>
+                <button
+                  className={[
+                    "table-cell",
+                    rowIndex === 0 && item.tableHasHeader !== false ? "table-cell-head" : "",
+                    selectedTableCell?.itemId === item.id &&
+                    selectedTableCell?.rowIndex === rowIndex &&
+                    selectedTableCell?.cellIndex === cellIndex
+                      ? "active"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={`${rowIndex}-${cellIndex}`}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectItem?.([item.id]);
+                    onSelectTableCell?.({ itemId: item.id, rowIndex, cellIndex });
+                  }}
+                >
+                  <span className={rowIndex === 0 && item.tableHasHeader !== false ? "table-cell-text table-cell-text-head" : "table-cell-text"}>
+                    {richTextToPlainText(cell) || (rowIndex === 0 ? `列${cellIndex + 1}` : "値")}
+                  </span>
+                </button>
               )),
             )}
           </div>
@@ -4653,22 +4937,22 @@ function ItemCard({
     <article
       className={isPlainTextCard ? "card plain-card" : "card"}
       onContextMenu={(event) => onItemContextMenu(event, item)}
-      onDoubleClick={() => onTextDoubleClick(item)}
     >
       <div className={isPlainTextCard ? "card-body plain-card-body" : "card-body"}>
         {!isPlainTextCard && <div className="card-kicker">{itemLabels[item.type]}</div>}
         {(item.title?.trim() || !isPlainTextCard) && (
-          <EditableText
+          <RichTextEditable
             value={item.title}
             className={isPlainTextCard ? "card-title plain-card-title" : "card-title"}
             placeholder={itemLabels[item.type]}
             displayAs="h2"
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            onActivate={(element) => activateEditor("title", element)}
           />
         )}
         {item.label && <span className="chip inline-chip">{item.label}</span>}
-        <EditableText
+        <RichTextEditable
           value={item.content}
           className="card-content"
           placeholder=""
@@ -4676,6 +4960,7 @@ function ItemCard({
           displayAs="p"
           style={itemTextStyle}
           onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+          onActivate={(element) => activateEditor("content", element)}
         />
         {item.type === "link" && item.url && (
           <a className="card-link" href={item.url} target="_blank" rel="noreferrer">
@@ -4688,10 +4973,100 @@ function ItemCard({
   );
 }
 
+function RichTextEditable({
+  value,
+  className,
+  multiline = false,
+  placeholder = "",
+  displayAs = "div",
+  style,
+  onSave,
+  onActivate,
+}) {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef(null);
+  const normalizedValue = normalizeRichTextValue(value || "", multiline);
+  const isEmpty = !richTextToPlainText(normalizedValue).trim();
+  const Tag = displayAs;
+
+  useEffect(() => {
+    if (!editing || !ref.current) return;
+    ref.current.innerHTML = normalizedValue;
+  }, [editing, normalizedValue]);
+
+  useEffect(() => {
+    if (!editing || !ref.current) return;
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      const selection = window.getSelection();
+      if (!selection || !ref.current) return;
+      const range = document.createRange();
+      range.selectNodeContents(ref.current);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      onActivate?.(ref.current);
+    });
+  }, [editing, onActivate]);
+
+  function save() {
+    const nextHtml = sanitizeRichText(ref.current?.innerHTML || "", { multiline });
+    onSave(richTextToPlainText(nextHtml).trim() ? nextHtml : "");
+    setEditing(false);
+  }
+
+  if (!editing) {
+    return (
+      <Tag
+        className={isEmpty ? `${className} rich-text-value is-empty` : `${className} rich-text-value`}
+        style={style}
+        data-placeholder={placeholder}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          setEditing(true);
+        }}
+        dangerouslySetInnerHTML={{ __html: isEmpty ? "" : normalizedValue }}
+      />
+    );
+  }
+
+  return (
+    <Tag
+      ref={ref}
+      className={`${className} rich-text-editor`}
+      style={style}
+      contentEditable
+      suppressContentEditableWarning
+      data-placeholder={placeholder}
+      onFocus={() => onActivate?.(ref.current)}
+      onBlur={save}
+      onInput={() => onActivate?.(ref.current)}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (!multiline && event.key === "Enter") {
+          event.preventDefault();
+          save();
+          return;
+        }
+        if (multiline && (event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          save();
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setEditing(false);
+        }
+      }}
+    />
+  );
+}
+
 function ResizeHandle({ item, onResize }) {
   function handlePointerDown(event) {
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
 
     const startX = event.clientX;
     const startY = event.clientY;
@@ -4701,8 +5076,8 @@ function ResizeHandle({ item, onResize }) {
     function handlePointerMove(moveEvent) {
       const delta = moveEvent.clientX - startX;
       const deltaY = moveEvent.clientY - startY;
-      const stepsX = Math.round(delta / 38);
-      const stepsY = Math.round(deltaY / 34);
+      const stepsX = Math.round(delta / (BOARD_UNIT + BOARD_GAP));
+      const stepsY = Math.round(deltaY / (BOARD_ROW + BOARD_GAP));
       onResize(item.id, startSpan + stepsX, startRows + stepsY);
     }
 
