@@ -1,43 +1,43 @@
-{
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Keep Board",
-  "version": "0.2.9",
-  "identifier": "local.keep-board.desktop",
-  "build": {
-    "beforeDevCommand": "npm.cmd run dev -- --port 5173",
-    "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "npm.cmd run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "Keep Board",
-        "width": 1280,
-        "height": 820,
-        "minWidth": 900,
-        "minHeight": 620,
-        "dragDropEnabled": false
-      }
-    ],
-    "security": {
-      "csp": null
-    }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "windows": {
-      "nsis": {
-        "installMode": "perMachine",
-        "installerHooks": "./windows/nsis-hooks.nsh"
-      }
-    },
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.ico"
-    ]
-  }
+﻿{
+    "$schema":  "https://schema.tauri.app/config/2",
+    "productName":  "Keep Board",
+    "version":  "0.2.11",
+    "identifier":  "local.keep-board.desktop",
+    "build":  {
+                  "beforeDevCommand":  "npm.cmd run dev -- --port 5173",
+                  "devUrl":  "http://127.0.0.1:5173",
+                  "beforeBuildCommand":  "npm.cmd run build",
+                  "frontendDist":  "../dist"
+              },
+    "app":  {
+                "windows":  [
+                                {
+                                    "title":  "Keep Board",
+                                    "width":  1280,
+                                    "height":  820,
+                                    "minWidth":  900,
+                                    "minHeight":  620,
+                                    "dragDropEnabled":  false
+                                }
+                            ],
+                "security":  {
+                                 "csp":  null
+                             }
+            },
+    "bundle":  {
+                   "active":  true,
+                   "targets":  "all",
+                   "windows":  {
+                                   "nsis":  {
+                                                "installMode":  "perMachine",
+                                                "installerHooks":  "./windows/nsis-hooks.nsh"
+                                            }
+                               },
+                   "icon":  [
+                                "icons/32x32.png",
+                                "icons/128x128.png",
+                                "icons/128x128@2x.png",
+                                "icons/icon.ico"
+                            ]
+               }
 }
