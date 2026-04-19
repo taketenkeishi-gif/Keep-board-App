@@ -279,6 +279,131 @@ button {
   margin-bottom: 24px;
 }
 
+.page-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(920px, calc(100vw - 120px));
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  box-shadow: 0 10px 26px rgba(18, 24, 31, 0.1);
+  backdrop-filter: blur(14px);
+}
+
+.page-tabs {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.page-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.page-tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 126px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease,
+    color 120ms ease;
+}
+
+.page-tab:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.page-tab.active {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--ink);
+}
+
+.page-thumb-mini {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: linear-gradient(160deg, var(--page-preview-start), var(--page-preview-end));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.32),
+    0 8px 18px rgba(30, 35, 42, 0.18);
+}
+
+.page-thumb-mini::before {
+  position: absolute;
+  inset: 6px 6px auto;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  content: "";
+}
+
+.page-thumb-art {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow:
+    -6px 8px 0 -4px rgba(255, 255, 255, 0.78),
+    7px 10px 0 -5px rgba(255, 255, 255, 0.52);
+}
+
+.page-tab-label {
+  overflow: hidden;
+  max-width: 130px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.page-nav,
+.page-add {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.page-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.page-add {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface) 86%);
+  color: var(--accent-dark);
+}
+
 .crumbs {
   display: flex;
   flex-wrap: wrap;
@@ -349,7 +474,7 @@ button {
   background:
     radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--board-grid-color) 88%, transparent) 1px, transparent 1.2px) 0 0 /
       18px 18px,
-    color-mix(in srgb, var(--surface) 56%, transparent);
+    color-mix(in srgb, var(--surface) 34%, transparent);
 }
 
 .free-board.tool-active::after {
@@ -631,6 +756,12 @@ button {
   backdrop-filter: blur(14px) saturate(1.15);
 }
 
+.board-open-ghost {
+  margin-bottom: 8px;
+  padding: 4px 0;
+  color: var(--muted);
+}
+
 .board-card:not(:has(.board-thumb)) .card-body {
   position: static;
   margin: 10px;
@@ -885,15 +1016,17 @@ button {
 }
 
 .floating-add-trigger {
-  min-height: 46px;
-  padding: 0 14px;
+  width: 56px;
+  min-width: 56px;
+  min-height: 56px;
+  padding: 0;
   border-radius: 999px;
   background: linear-gradient(180deg, #2aa876, #218661);
   box-shadow: 0 10px 24px rgba(32, 136, 97, 0.35);
 }
 
 .floating-add-trigger span {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 800;
   line-height: 1;
 }
@@ -902,6 +1035,7 @@ button {
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0;
+  display: none;
 }
 
 .floating-add-menu .menu-panel {
@@ -1238,6 +1372,66 @@ button {
   box-shadow: none;
 }
 
+.text-sticker-card {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.text-sticker-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.text-sticker-content {
+  margin: 0;
+  padding: 0;
+  min-height: 28px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.plain-card {
+  overflow: visible;
+  min-height: 28px;
+  border-color: transparent;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.plain-card:hover {
+  transform: none;
+  box-shadow: none !important;
+}
+
+.plain-card .resize-handle {
+  right: -4px;
+  bottom: -4px;
+}
+
+.plain-card-body {
+  padding: 0;
+}
+
+.plain-card-title {
+  margin-bottom: 6px;
+}
+
+.plain-card .inline-chip {
+  margin: 0 0 8px;
+}
+
+.note-card .card-title,
+.text-card .card-title,
+.plain-card .card-content,
+.plain-card .card-link,
+.text-card .text-sticker-content {
+  text-shadow: none;
+}
+
 .sticker-image {
   display: block;
   width: 100%;
@@ -1480,6 +1674,20 @@ button {
   color: white;
 }
 
+.lightbox-annotate {
+  position: fixed;
+  top: 20px;
+  right: 76px;
+  z-index: 91;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 700;
+}
+
 .lightbox.chrome-hidden .lightbox-figure figcaption {
   opacity: 0;
   transform: translateY(12px);
@@ -1617,6 +1825,8 @@ button {
 
 .image-edit-wrap {
   position: relative;
+  width: min(96vw, 1440px);
+  min-height: min(78vh, 900px);
 }
 
 .annotation-layer {
@@ -1709,6 +1919,10 @@ button {
 
   .board-header {
     display: block;
+  }
+
+  .page-strip {
+    width: 100%;
   }
 
   .grid {

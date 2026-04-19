@@ -33,6 +33,9 @@ const BOARD_ZOOM_MAX = 3;
 const SWAP_OVERLAP_RATIO = 0.38;
 const SWAP_ZONE_INSET_RATIO = 0.3;
 const BOARD_EDGE_PADDING = 20;
+const BOARD_BASE_HEIGHT_A4 = Math.round(BOARD_CANVAS_WIDTH * Math.sqrt(2));
+const IMAGE_EDIT_CANVAS_WIDTH = 1440;
+const IMAGE_EDIT_CANVAS_HEIGHT = 900;
 
 const defaultSettings = {
   fontSize: 15,
@@ -56,11 +59,21 @@ const itemLabels = {
   comment: "コメント",
   column: "Column",
   table: "Table",
+  "text-sticker": "テキスト",
   draw: "Draw",
   "shape-line": "Line",
   "shape-rect": "Rect",
   "shape-circle": "Circle",
 };
+
+const PAGE_PREVIEW_THEMES = [
+  ["#ffb86c", "#ff7a7a"],
+  ["#7ad7c9", "#4f8cff"],
+  ["#ffe27a", "#ff9f5a"],
+  ["#ff9bc2", "#ff6b8f"],
+  ["#9ad89a", "#5bb673"],
+  ["#9fb6ff", "#6f86ff"],
+];
 
 function now() {
   return new Date().toISOString();
@@ -70,9 +83,99 @@ function createId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+function buildDefaultPage(boardId, order = 0, title = "") {
+  const createdAt = now();
+  return {
+    id: createId("page"),
+    boardId,
+    title: title || `${order + 1}`,
+    order,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+function getPageDisplayTitle(page, index) {
+  const normalized = `${page?.title || ""}`.trim().replace(/^page\s*/i, "").trim();
+  return normalized || `${index + 1}`;
+}
+
+function getPagePreviewStyle(index) {
+  const [start, end] = PAGE_PREVIEW_THEMES[index % PAGE_PREVIEW_THEMES.length];
+  return {
+    "--page-preview-start": start,
+    "--page-preview-end": end,
+  };
+}
+
+function getBoardPages(state, boardId) {
+  return (state.pages || []).filter((page) => page.boardId === boardId).sort(sortByOrder);
+}
+
+function getDefaultPageId(state, boardId) {
+  const pages = getBoardPages(state, boardId);
+  return pages[0]?.id || "";
+}
+
+function ensurePagesInState(rawState) {
+  const createdAt = now();
+  const state = {
+    boards: Array.isArray(rawState?.boards) ? rawState.boards : [],
+    items: Array.isArray(rawState?.items) ? rawState.items : [],
+    pages: Array.isArray(rawState?.pages) ? rawState.pages : [],
+  };
+
+  const pages = [...state.pages];
+  const pageIdByBoardId = new Map();
+
+  state.boards.forEach((board) => {
+    const boardPages = pages.filter((page) => page.boardId === board.id).sort(sortByOrder);
+    if (!boardPages.length) {
+      const defaultPage = {
+        ...buildDefaultPage(board.id, 0, "1"),
+        createdAt,
+        updatedAt: createdAt,
+      };
+      pages.push(defaultPage);
+      pageIdByBoardId.set(board.id, defaultPage.id);
+      return;
+    }
+    pageIdByBoardId.set(board.id, boardPages[0].id);
+  });
+
+  const normalizedPages = normalizeOrders(
+    pages
+      .map((page) => ({
+        ...page,
+        createdAt: page.createdAt || createdAt,
+        updatedAt: page.updatedAt || page.createdAt || createdAt,
+      }))
+      .sort(sortByOrder),
+  );
+
+  const items = state.items.map((item, index) => {
+    const fallbackPageId = pageIdByBoardId.get(item.boardId) || "";
+    return {
+      ...item,
+      pageId: item.pageId || fallbackPageId,
+      createdAt: item.createdAt || createdAt,
+      updatedAt: item.updatedAt || item.createdAt || createdAt,
+      order: Number.isFinite(item.order) ? item.order : index,
+    };
+  });
+
+  return {
+    ...rawState,
+    boards: state.boards,
+    items,
+    pages: normalizedPages,
+  };
+}
+
 function createInitialState() {
   const createdAt = now();
   const firstBoardId = createId("board");
+  const firstPage = buildDefaultPage(firstBoardId, 0, "1");
   return {
     boards: [
       {
@@ -84,6 +187,13 @@ function createInitialState() {
         order: 0,
       },
     ],
+    pages: [
+      {
+        ...firstPage,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ],
     items: [],
   };
 }
@@ -93,7 +203,7 @@ function loadState() {
   if (!saved) return createInitialState();
 
   try {
-    return JSON.parse(saved);
+    return ensurePagesInState(JSON.parse(saved));
   } catch {
     return createInitialState();
   }
@@ -276,6 +386,7 @@ function getAspectBasedCardSize(width, height, fallbackType) {
 export default function App() {
   const [state, setState] = useState(loadState);
   const [currentBoardId, setCurrentBoardId] = useState(null);
+  const [currentPageId, setCurrentPageId] = useState("");
   const [dialog, setDialog] = useState(null);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isExternalDragOver, setIsExternalDragOver] = useState(false);
@@ -302,6 +413,13 @@ export default function App() {
   const lastExternalDropRef = useRef({ signature: "", timestamp: 0 });
 
   const currentBoard = state.boards.find((board) => board.id === currentBoardId) || null;
+  const currentBoardPages = useMemo(
+    () => (currentBoardId ? getBoardPages(state, currentBoardId) : []),
+    [currentBoardId, state],
+  );
+  const activePageId = currentPageId || currentBoardPages[0]?.id || "";
+  const currentPageIndex = currentBoardPages.findIndex((page) => page.id === activePageId);
+  const currentPage = currentPageIndex >= 0 ? currentBoardPages[currentPageIndex] : null;
   const rootBoards = useMemo(
     () => state.boards.filter((board) => board.parentBoardId === null).sort(sortByOrder),
     [state.boards],
@@ -322,6 +440,13 @@ export default function App() {
       ),
     [boardItems, query, selectedLabels, settings.sortMode],
   );
+  const pageItems = useMemo(
+    () =>
+      activePageId
+        ? visibleBoardItems.filter((item) => (item.pageId || getDefaultPageId(state, currentBoardId)) === activePageId)
+        : visibleBoardItems,
+    [activePageId, currentBoardId, state, visibleBoardItems],
+  );
   const boardLabels = useMemo(
     () => [...new Set(boardItems.map((item) => item.label).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja")),
     [boardItems],
@@ -334,7 +459,7 @@ export default function App() {
     }
     return [...statsMap.entries()].map(([label, count]) => ({ label, count }));
   }, [boardItems]);
-  const visibleImages = visibleBoardItems.filter(
+  const visibleImages = pageItems.filter(
     (item) => (item.type === "image" || item.type === "video") && item.imagePath,
   );
   const lightboxIndex = visibleImages.findIndex((item) => item.id === lightboxId);
@@ -344,11 +469,7 @@ export default function App() {
     : null;
   const selectedTextItem =
     selectedItem &&
-    !selectedItem.sticker &&
-    selectedItem.type !== "todo" &&
-    selectedItem.type !== "image" &&
-    selectedItem.type !== "video" &&
-    selectedItem.type !== "board"
+    ["note", "link", "todo", "comment", "column", "table", "text-sticker"].includes(selectedItem.type)
       ? selectedItem
       : null;
   const selectedImageItem =
@@ -381,6 +502,8 @@ export default function App() {
     setShowShapePanel(false);
     setShowLabelPanel(false);
     setIsAddMenuOpen(false);
+    const firstPageId = currentBoardId ? getDefaultPageId(state, currentBoardId) : "";
+    setCurrentPageId(firstPageId);
   }, [currentBoardId]);
 
   useEffect(() => {
@@ -416,6 +539,19 @@ export default function App() {
       }
 
       if (!(event.ctrlKey || event.metaKey)) {
+        if (currentBoard && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          if (!currentBoardPages.length) return;
+          const currentIndex = currentBoardPages.findIndex((page) => page.id === activePageId);
+          const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+          const delta = event.key === "ArrowRight" ? 1 : -1;
+          const nextIndex = clamp(safeIndex + delta, 0, currentBoardPages.length - 1);
+          if (nextIndex !== safeIndex) {
+            event.preventDefault();
+            setCurrentPageId(currentBoardPages[nextIndex].id);
+            setSelectedItemIds([]);
+          }
+          return;
+        }
         if ((event.key === "Delete" || event.key === "Backspace") && selectedItemIds.length) {
           event.preventDefault();
           deleteItemsByIds(selectedItemIds);
@@ -441,7 +577,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTool, currentBoard, lightboxId, selectedItemIds, state]);
+  }, [activePageId, activeTool, currentBoard, currentBoardPages, lightboxId, selectedItemIds, state]);
 
   useEffect(() => {
     async function handlePaste(event) {
@@ -541,23 +677,27 @@ export default function App() {
   function createBoard(title, parentBoardId = currentBoardId) {
     const values = typeof title === "string" ? { title } : title;
     const createdAt = now();
-    updateState((previous) => ({
-      ...previous,
-      boards: [
-        ...previous.boards,
-        {
-          id: createId("board"),
-          title: values.title,
-          parentBoardId,
-          fontColor: values.fontColor || "",
-          fontWeight: values.fontWeight || "700",
-          thumbnailImage: values.thumbnailImage || "",
-          createdAt,
-          updatedAt: createdAt,
-          order: previous.boards.filter((board) => board.parentBoardId === parentBoardId).length,
-        },
-      ],
-    }));
+    updateState((previous) => {
+      const boardId = createId("board");
+      return {
+        ...previous,
+        boards: [
+          ...previous.boards,
+          {
+            id: boardId,
+            title: values.title,
+            parentBoardId,
+            fontColor: values.fontColor || "",
+            fontWeight: values.fontWeight || "700",
+            thumbnailImage: values.thumbnailImage || "",
+            createdAt,
+            updatedAt: createdAt,
+            order: previous.boards.filter((board) => board.parentBoardId === parentBoardId).length,
+          },
+        ],
+        pages: [...(previous.pages || []), { ...buildDefaultPage(boardId, 0, "1"), createdAt, updatedAt: createdAt }],
+      };
+    });
   }
 
   function updateBoard(boardId, title) {
@@ -576,42 +716,75 @@ export default function App() {
   function createSubBoard() {
     const createdAt = now();
     const boardId = createId("board");
-    const order = boardItems.length;
-    updateState((previous) => ({
-      ...previous,
-      boards: [
-        ...previous.boards,
-        {
-          id: boardId,
-          title: "新しいサブボード",
-          parentBoardId: currentBoardId,
-          fontColor: "",
-          fontWeight: "700",
-          thumbnailImage: "",
-          createdAt,
-          updatedAt: createdAt,
-          order,
-        },
-      ],
-      items: [
-        ...previous.items,
-        {
-          id: createId("item"),
-          boardId: currentBoardId,
-          type: "board",
-          title: "新しいサブボード",
-          content: "",
-          imagePath: "",
-          url: "",
-          linkedBoardId: boardId,
-          widthUnits: 2,
-          heightUnits: 3,
-          order,
-          createdAt,
-          updatedAt: createdAt,
-        },
-      ],
-    }));
+    const defaultPage = buildDefaultPage(boardId, 0, "1");
+    updateState((previous) => {
+      const pageId = activePageId || getDefaultPageId(previous, currentBoardId);
+      return {
+        ...previous,
+        boards: [
+          ...previous.boards,
+          {
+            id: boardId,
+            title: "新しいサブボード",
+            parentBoardId: currentBoardId,
+            fontColor: "",
+            fontWeight: "700",
+            thumbnailImage: "",
+            createdAt,
+            updatedAt: createdAt,
+            order: previous.boards.filter((board) => board.parentBoardId === currentBoardId).length,
+          },
+        ],
+        pages: [...(previous.pages || []), { ...defaultPage, createdAt, updatedAt: createdAt }],
+        items: [
+          ...previous.items,
+          {
+            id: createId("item"),
+            boardId: currentBoardId,
+            pageId,
+            type: "board",
+            title: "新しいサブボード",
+            content: "",
+            imagePath: "",
+            url: "",
+            linkedBoardId: boardId,
+            widthUnits: 2,
+            heightUnits: 3,
+            order: previous.items.filter(
+              (candidate) =>
+                candidate.boardId === currentBoardId &&
+                (candidate.pageId || getDefaultPageId(previous, currentBoardId)) === pageId,
+            ).length,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        ],
+      };
+    });
+  }
+
+  function createPage() {
+    if (!currentBoardId) return;
+    const createdAt = now();
+    const nextPageId = createId("page");
+    updateState((previous) => {
+      const pages = getBoardPages(previous, currentBoardId);
+      const order = pages.length;
+      const page = {
+        id: nextPageId,
+        boardId: currentBoardId,
+        title: `${order + 1}`,
+        order,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      return {
+        ...previous,
+        pages: [...(previous.pages || []), page],
+      };
+    });
+    setCurrentPageId(nextPageId);
+    setSelectedItemIds([]);
   }
 
   function createQuickItem(type, position = null, overrides = {}) {
@@ -623,6 +796,19 @@ export default function App() {
       comment: { title: "", content: "", widthUnits: 3 },
       column: { title: "Column", content: "", widthUnits: 4 },
       table: { title: "Table", content: " | \n--- | ---\n | ", widthUnits: 4 },
+      "text-sticker": {
+        title: "",
+        content: "テキスト",
+        widthUnits: 3,
+        heightUnits: 2,
+        sticker: true,
+        textAlign: "left",
+        textColor: "#181c22",
+        fontSize: 28,
+        lineHeight: 1.35,
+        letterSpacing: 0,
+        fontWeight: "600",
+      },
       draw: { title: "Sticker", content: "", widthUnits: 4, heightUnits: 4, sticker: true, angleDeg: 0 },
       "shape-line": {
         title: "Line",
@@ -661,10 +847,17 @@ export default function App() {
     updateState((previous) => ({
       ...previous,
       items: (() => {
-        const order = previous.items.filter((candidate) => candidate.boardId === currentBoardId).length;
+        const order = previous.items
+          .filter(
+            (candidate) =>
+              candidate.boardId === currentBoardId &&
+              (candidate.pageId || getDefaultPageId(previous, currentBoardId)) === (activePageId || getDefaultPageId(previous, currentBoardId)),
+          )
+          .length;
         const draft = {
           id: createId("item"),
           boardId: currentBoardId,
+          pageId: activePageId || getDefaultPageId(previous, currentBoardId),
           linkedBoardId: "",
           order,
           createdAt,
@@ -699,8 +892,12 @@ export default function App() {
 
     updateState((previous) => {
       const boardId = createId("board");
+      const boardPageId = createId("page");
       const boardOrder = previous.boards.filter((board) => board.parentBoardId === currentBoardId).length;
-      const boardItemOrder = previous.items.filter((candidate) => candidate.boardId === currentBoardId).length;
+      const currentPage = activePageId || getDefaultPageId(previous, currentBoardId);
+      const boardItemOrder = previous.items
+        .filter((candidate) => candidate.boardId === currentBoardId && (candidate.pageId || currentPage) === currentPage)
+        .length;
 
       const boardCardDraft = {
         type: "board",
@@ -732,6 +929,7 @@ export default function App() {
         const positioned = {
           id: createId("item"),
           boardId: boardId,
+          pageId: boardPageId,
           linkedBoardId: "",
           order: index,
           createdAt,
@@ -762,11 +960,23 @@ export default function App() {
             order: boardOrder,
           },
         ],
+        pages: [
+          ...(previous.pages || []),
+          {
+            id: boardPageId,
+            boardId,
+            title: "1",
+            order: 0,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        ],
         items: [
           ...previous.items,
           {
             id: createId("item"),
             boardId: currentBoardId,
+            pageId: currentPage,
             type: "board",
             title: boardTitle,
             content: "",
@@ -890,16 +1100,22 @@ export default function App() {
         items: [
           ...previous.items,
           (() => {
+            const pageId = activePageId || getDefaultPageId(previous, currentBoardId);
             const draft = {
-            id: createId("item"),
-            boardId: currentBoardId,
-            type,
-            linkedBoardId: "",
-            widthUnits: type === "image" || type === "video" ? 4 : 2,
-            heightUnits: type === "image" || type === "video" ? 4 : 2,
-            order: boardItems.length,
-            createdAt,
-            ...record,
+              id: createId("item"),
+              boardId: currentBoardId,
+              pageId,
+              type,
+              linkedBoardId: "",
+              widthUnits: type === "image" || type === "video" ? 4 : 2,
+              heightUnits: type === "image" || type === "video" ? 4 : 2,
+              order: previous.items.filter(
+                (candidate) =>
+                  candidate.boardId === currentBoardId &&
+                  (candidate.pageId || getDefaultPageId(previous, currentBoardId)) === pageId,
+              ).length,
+              createdAt,
+              ...record,
             };
             const clampedPosition = position ? clampPosition(draft, position) : null;
             return {
@@ -919,19 +1135,27 @@ export default function App() {
       ...previous,
       items: [
         ...previous.items,
-        {
-          id: createId("item"),
-          boardId: currentBoardId,
-          linkedBoardId: "",
-          widthUnits: item.widthUnits || (item.type === "image" || item.type === "video" ? 4 : 2),
-          heightUnits: item.heightUnits || (item.type === "image" || item.type === "video" ? 4 : 2),
-          x: dropPosition?.x,
-          y: dropPosition?.y,
-          order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length,
-          createdAt,
-          updatedAt: createdAt,
-          ...item,
-        },
+        (() => {
+          const pageId = activePageId || getDefaultPageId(previous, currentBoardId);
+          return {
+            id: createId("item"),
+            boardId: currentBoardId,
+            pageId,
+            linkedBoardId: "",
+            widthUnits: item.widthUnits || (item.type === "image" || item.type === "video" ? 4 : 2),
+            heightUnits: item.heightUnits || (item.type === "image" || item.type === "video" ? 4 : 2),
+            x: dropPosition?.x,
+            y: dropPosition?.y,
+            order: previous.items.filter(
+              (candidate) =>
+                candidate.boardId === currentBoardId &&
+                (candidate.pageId || getDefaultPageId(previous, currentBoardId)) === pageId,
+            ).length,
+            createdAt,
+            updatedAt: createdAt,
+            ...item,
+          };
+        })(),
       ],
     }));
   }
@@ -943,7 +1167,9 @@ export default function App() {
       const ids = new Set([boardId, ...getDescendantBoardIds(boardId, previous.boards)]);
 
       return {
+        ...previous,
         boards: previous.boards.filter((board) => !ids.has(board.id)),
+        pages: (previous.pages || []).filter((page) => !ids.has(page.boardId)),
         items: previous.items.filter(
           (item) => !ids.has(item.boardId) && !ids.has(item.linkedBoardId),
         ),
@@ -964,7 +1190,14 @@ export default function App() {
     updateState((previous) => {
       const remainingItems = previous.items.filter((candidate) => candidate.id !== item.id);
       const normalized = normalizeOrders(
-        remainingItems.filter((candidate) => candidate.boardId === item.boardId).sort(sortByOrder),
+        remainingItems
+          .filter(
+            (candidate) =>
+              candidate.boardId === item.boardId &&
+              (candidate.pageId || getDefaultPageId(previous, item.boardId)) ===
+                (item.pageId || getDefaultPageId(previous, item.boardId)),
+          )
+          .sort(sortByOrder),
       );
       const normalizedById = new Map(normalized.map((candidate) => [candidate.id, candidate]));
       return {
@@ -999,7 +1232,12 @@ export default function App() {
 
     updateState((previous) => {
       const ordered = previous.items
-        .filter((item) => item.boardId === currentBoardId)
+        .filter(
+          (item) =>
+            item.boardId === currentBoardId &&
+            (item.pageId || getDefaultPageId(previous, currentBoardId)) ===
+              (activePageId || getDefaultPageId(previous, currentBoardId)),
+        )
         .sort(sortByOrder);
       const activeItem = ordered.find((item) => item.id === active.id);
       const overItem = ordered.find((item) => item.id === over.id);
@@ -1013,6 +1251,7 @@ export default function App() {
             getDescendantBoardIds(activeBoardId, previous.boards).includes(targetBoardId));
 
         if (!isMovingBoardIntoItself) {
+          const targetPageId = getDefaultPageId(previous, targetBoardId);
           return {
             ...previous,
             items: previous.items.map((item) =>
@@ -1020,7 +1259,12 @@ export default function App() {
                 ? {
                     ...item,
                     boardId: targetBoardId,
-                    order: previous.items.filter((candidate) => candidate.boardId === targetBoardId).length,
+                    pageId: targetPageId,
+                    order: previous.items.filter(
+                      (candidate) =>
+                        candidate.boardId === targetBoardId &&
+                        (candidate.pageId || getDefaultPageId(previous, targetBoardId)) === targetPageId,
+                    ).length,
                     updatedAt: now(),
                   }
                 : item,
@@ -1067,7 +1311,12 @@ export default function App() {
 
   function moveItemsOnBoard(itemIds, positions) {
     updateState((previous) => {
-      const boardItemsForLayout = previous.items.filter((item) => item.boardId === currentBoardId);
+      const pageId = activePageId || getDefaultPageId(previous, currentBoardId);
+      const boardItemsForLayout = previous.items.filter(
+        (item) =>
+          item.boardId === currentBoardId &&
+          (item.pageId || getDefaultPageId(previous, currentBoardId)) === pageId,
+      );
       const positioned = boardItemsForLayout.map((item, index) => {
         const base = withDefaultPosition(item, index);
         if (!positions[item.id]) return base;
@@ -1097,29 +1346,37 @@ export default function App() {
 
     if (invalidMove) return;
 
-    updateState((previous) => ({
-      ...previous,
-      items: previous.items.map((candidate) =>
-        candidate.id === item.id
-          ? {
-              ...candidate,
-              boardId: targetBoardId,
-              x: undefined,
-              y: undefined,
-              order: previous.items.filter((target) => target.boardId === targetBoardId).length,
-              updatedAt: now(),
-            }
-          : candidate,
-      ),
-      boards:
-        item.type === "board"
-          ? previous.boards.map((board) =>
-              board.id === item.linkedBoardId
-                ? { ...board, parentBoardId: targetBoardId, updatedAt: now() }
-                : board,
-            )
-          : previous.boards,
-    }));
+    updateState((previous) => {
+      const targetPageId = getDefaultPageId(previous, targetBoardId);
+      return {
+        ...previous,
+        items: previous.items.map((candidate) =>
+          candidate.id === item.id
+            ? {
+                ...candidate,
+                boardId: targetBoardId,
+                pageId: targetPageId,
+                x: undefined,
+                y: undefined,
+                order: previous.items.filter(
+                  (target) =>
+                    target.boardId === targetBoardId &&
+                    (target.pageId || getDefaultPageId(previous, targetBoardId)) === targetPageId,
+                ).length,
+                updatedAt: now(),
+              }
+            : candidate,
+        ),
+        boards:
+          item.type === "board"
+            ? previous.boards.map((board) =>
+                board.id === item.linkedBoardId
+                  ? { ...board, parentBoardId: targetBoardId, updatedAt: now() }
+                  : board,
+              )
+            : previous.boards,
+      };
+    });
   }
 
   async function replaceMediaAsset(itemId, file) {
@@ -1157,18 +1414,31 @@ export default function App() {
   function duplicateSelectedItems(itemIds = selectedItemIds) {
     if (!currentBoardId || !itemIds.length) return;
     updateState((previous) => {
+      const pageId = activePageId || getDefaultPageId(previous, currentBoardId);
       const selected = previous.items
-        .filter((item) => item.boardId === currentBoardId && itemIds.includes(item.id) && item.type !== "board")
+        .filter(
+          (item) =>
+            item.boardId === currentBoardId &&
+            (item.pageId || getDefaultPageId(previous, currentBoardId)) === pageId &&
+            itemIds.includes(item.id) &&
+            item.type !== "board",
+        )
         .map((item, index) => {
           const position = clampPosition(item, { x: (item.x || 0) + 40, y: (item.y || 0) + 40 + index * 10 });
           return {
             ...item,
             id: createId("item"),
+            pageId,
             x: position.x,
             y: position.y,
             createdAt: now(),
             updatedAt: now(),
-            order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length + index,
+            order:
+              previous.items.filter(
+                (candidate) =>
+                  candidate.boardId === currentBoardId &&
+                  (candidate.pageId || getDefaultPageId(previous, currentBoardId)) === pageId,
+              ).length + index,
           };
         });
 
@@ -1192,7 +1462,9 @@ export default function App() {
       );
 
       return {
+        ...previous,
         boards: previous.boards.filter((board) => !allBoardIds.has(board.id)),
+        pages: (previous.pages || []).filter((page) => !allBoardIds.has(page.boardId)),
         items: previous.items.filter(
           (item) => !selectedIds.has(item.id) && !allBoardIds.has(item.boardId) && !allBoardIds.has(item.linkedBoardId),
         ),
@@ -1202,8 +1474,15 @@ export default function App() {
   }
 
   function cutSelectedItems() {
+    const pageId = activePageId || getDefaultPageId(state, currentBoardId);
     const selected = state.items
-      .filter((item) => item.boardId === currentBoardId && selectedItemIds.includes(item.id) && item.type !== "board")
+      .filter(
+        (item) =>
+          item.boardId === currentBoardId &&
+          (item.pageId || getDefaultPageId(state, currentBoardId)) === pageId &&
+          selectedItemIds.includes(item.id) &&
+          item.type !== "board",
+      )
       .map((item) => ({ ...item }));
     if (!selected.length) return;
     const minX = Math.min(...selected.map((item) => item.x || 0));
@@ -1219,15 +1498,22 @@ export default function App() {
   function pasteClipboardItems() {
     if (!currentBoardId || !clipboardRef.current.length) return;
     updateState((previous) => {
+      const pageId = activePageId || getDefaultPageId(previous, currentBoardId);
       const pasted = clipboardRef.current.map((item, index) => ({
         ...item,
         id: createId("item"),
         boardId: currentBoardId,
+        pageId,
         x: clampPosition(item, { x: 40 + (item.x || 0), y: 40 + (item.y || 0) + index * 8 }).x,
         y: clampPosition(item, { x: 40 + (item.x || 0), y: 40 + (item.y || 0) + index * 8 }).y,
         createdAt: now(),
         updatedAt: now(),
-        order: previous.items.filter((candidate) => candidate.boardId === currentBoardId).length + index,
+        order:
+          previous.items.filter(
+            (candidate) =>
+              candidate.boardId === currentBoardId &&
+              (candidate.pageId || getDefaultPageId(previous, currentBoardId)) === pageId,
+          ).length + index,
       }));
       return {
         ...previous,
@@ -1266,6 +1552,8 @@ export default function App() {
     setIsAddMenuOpen(false);
     if (type === "board") {
       createSubBoard();
+    } else if (type === "page") {
+      createPage();
     } else {
       setDialog({ kind: "item", type });
     }
@@ -1501,6 +1789,67 @@ async function handleExternalDrop(event) {
                     {currentBoard.title}
                   </h1>
                 )}
+                {currentBoardPages.length > 0 && (
+                  <div className="page-strip" onClick={(event) => event.stopPropagation()}>
+                    <button
+                      className="page-nav"
+                      type="button"
+                      onClick={() => {
+                        if (currentPageIndex <= 0) return;
+                        setCurrentPageId(currentBoardPages[currentPageIndex - 1].id);
+                        setSelectedItemIds([]);
+                      }}
+                      disabled={currentPageIndex <= 0}
+                    >
+                      ←
+                    </button>
+                    <div className="page-tabs" role="tablist" aria-label="ページ切り替え">
+                      {currentBoardPages.map((page, index) => {
+                        const isActive = page.id === activePageId;
+                        return (
+                          <button
+                            key={page.id}
+                            className={isActive ? "page-tab active" : "page-tab"}
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            onClick={() => {
+                              setCurrentPageId(page.id);
+                              setSelectedItemIds([]);
+                            }}
+                            title={getPageDisplayTitle(page, index)}
+                          >
+                            <span className="page-thumb-mini" style={getPagePreviewStyle(index)}>
+                              <span className="page-thumb-art" />
+                            </span>
+                            <span className="page-tab-label">{getPageDisplayTitle(page, index)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      className="page-nav"
+                      type="button"
+                      onClick={() => {
+                        if (currentPageIndex >= currentBoardPages.length - 1) return;
+                        setCurrentPageId(currentBoardPages[currentPageIndex + 1].id);
+                        setSelectedItemIds([]);
+                      }}
+                      disabled={currentPageIndex >= currentBoardPages.length - 1}
+                    >
+                      →
+                    </button>
+                    <button
+                      className="page-add"
+                      type="button"
+                      onClick={() => createPage()}
+                      title="ページを追加"
+                      aria-label="ページを追加"
+                    >
+                      ＋
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="menu floating-add-menu">
                 <button
@@ -1511,7 +1860,6 @@ async function handleExternalDrop(event) {
                   aria-label="カードを追加"
                 >
                   <span>＋</span>
-                  <b>カード追加</b>
                 </button>
                 <div className="menu-panel" hidden={!isAddMenuOpen}>
                   <button type="button" onClick={() => openAdd("note")}>
@@ -1526,8 +1874,14 @@ async function handleExternalDrop(event) {
                   <button type="button" onClick={() => openAdd("link")}>
                     ＋ リンク
                   </button>
+                  <button type="button" onClick={() => createQuickItem("note", null, { content: "テキスト" })}>
+                    ＋ テキスト
+                  </button>
                   <button type="button" onClick={() => openAdd("board")}>
                     ＋ サブボード
+                  </button>
+                  <button type="button" onClick={() => openAdd("page")}>
+                    ＋ ページ
                   </button>
                 </div>
               </div>
@@ -1585,7 +1939,7 @@ async function handleExternalDrop(event) {
               }}
             />
             <BoardCanvas
-              items={visibleBoardItems}
+              items={pageItems}
               boards={state.boards}
               zoom={settings.boardZoom}
               selectedIds={selectedItemIds}
@@ -1595,6 +1949,7 @@ async function handleExternalDrop(event) {
               activeCaptionId={activeCaptionId}
               onOpenBoard={setCurrentBoardId}
               onEditBoard={(board) => setDialog({ kind: "board", board })}
+              onUpdateBoardTitle={(boardId, title) => updateBoard(boardId, { title })}
               onBoardContextMenu={openBoardContextMenu}
               onEdit={(target) => setDialog({ kind: "item", type: target.type, item: target })}
               onDelete={deleteItem}
@@ -1637,7 +1992,7 @@ async function handleExternalDrop(event) {
                 createQuickItem(tool, position, overrides);
               }}
             />
-            {!visibleBoardItems.length && (
+            {!pageItems.length && (
               <p className="empty">{query ? "一致するカードがありません。" : "追加ボタンからカードを置けます。"}</p>
             )}
             <div className="drop-hint" aria-hidden={!isExternalDragOver}>
@@ -1820,6 +2175,7 @@ async function handleExternalDrop(event) {
           onPrevious={() => setLightboxId(visibleImages[lightboxIndex - 1]?.id || lightboxItem.id)}
           onNext={() => setLightboxId(visibleImages[lightboxIndex + 1]?.id || lightboxItem.id)}
           onTitleChange={(title) => patchItem(lightboxItem.id, { title })}
+          onAnnotate={() => setDialog({ kind: "imageEdit", mode: "annotate", item: lightboxItem })}
         />
       )}
     </div>
@@ -2629,6 +2985,7 @@ function BoardCanvas({
   activeCaptionId,
   onOpenBoard,
   onEditBoard,
+  onUpdateBoardTitle,
   onBoardContextMenu,
   onEdit,
   onDelete,
@@ -2667,8 +3024,10 @@ function BoardCanvas({
     () => new Map(positionedItems.map((item) => [item.id, item])),
     [positionedItems],
   );
-  const canvasHeight =
-    positionedItems.reduce((height, item) => Math.max(height, item.y + itemRect(item).height), 360) + 180;
+  const canvasHeight = Math.max(
+    BOARD_BASE_HEIGHT_A4,
+    positionedItems.reduce((height, item) => Math.max(height, item.y + itemRect(item).height), 360) + 180,
+  );
 
   function paintStroke(context, stroke, scale = 1) {
     if (!stroke?.points?.length) return;
@@ -3250,6 +3609,7 @@ function BoardCanvas({
               activeCaptionId={activeCaptionId}
               onOpenBoard={onOpenBoard}
               onEditBoard={onEditBoard}
+              onUpdateBoardTitle={onUpdateBoardTitle}
               onBoardContextMenu={onBoardContextMenu}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -3314,6 +3674,7 @@ function FreeCard({
   activeCaptionId,
   onOpenBoard,
   onEditBoard,
+  onUpdateBoardTitle,
   onBoardContextMenu,
   onEdit,
   onDelete,
@@ -3346,6 +3707,7 @@ function FreeCard({
         top: item.y || 0,
         width: size.width,
         height: size.height,
+        zIndex: item.type === "text-sticker" ? 9 : item.sticker ? 7 : undefined,
         transform: dragOffset ? `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` : undefined,
       }}
       onDragStart={(event) => event.preventDefault()}
@@ -3361,6 +3723,7 @@ function FreeCard({
         isCaptionVisible={activeCaptionId === item.id}
         onOpenBoard={onOpenBoard}
         onEditBoard={onEditBoard}
+        onUpdateBoardTitle={onUpdateBoardTitle}
         onBoardContextMenu={onBoardContextMenu}
         onEdit={onEdit}
         onDelete={onDelete}
@@ -3417,6 +3780,7 @@ function BoardSidebar({
     { id: "comment", label: "Comment", icon: "💬" },
     { id: "column", label: "Column", icon: "▤" },
     { id: "table", label: "Table", icon: "▦" },
+    { id: "text-sticker", label: "Text Sticker", icon: "T" },
     { id: "board", label: "Board", icon: "◫" },
   ];
   const shapeTools = [
@@ -3557,6 +3921,55 @@ function BoardSidebar({
         {selectedTextItem && (
           <section className="sidebar-section">
             <div className="sidebar-title">テキストツール</div>
+            <label className="field">
+              <span>フォント</span>
+              <select
+                value={selectedTextItem.fontFamily || "inherit"}
+                onChange={(event) =>
+                  onStyleChange(selectedTextItem, {
+                    fontFamily: event.target.value === "inherit" ? "" : event.target.value,
+                  })
+                }
+              >
+                <option value="inherit">標準</option>
+                <option value='"Yu Gothic UI", "Noto Sans JP", sans-serif'>ゴシック</option>
+                <option value='"Hiragino Mincho ProN", "Yu Mincho", serif'>明朝</option>
+                <option value='"Arial Black", "Avenir Next", sans-serif'>見出し</option>
+                <option value='"Consolas", "SF Mono", monospace'>等幅</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>文字サイズ: {selectedTextItem.fontSize || 16}px</span>
+              <input
+                type="range"
+                min="10"
+                max="96"
+                value={selectedTextItem.fontSize || 16}
+                onChange={(event) => onStyleChange(selectedTextItem, { fontSize: Number(event.target.value) })}
+              />
+            </label>
+            <label className="field">
+              <span>行間: {(selectedTextItem.lineHeight || 1.45).toFixed(2)}</span>
+              <input
+                type="range"
+                min="1"
+                max="2.4"
+                step="0.05"
+                value={selectedTextItem.lineHeight || 1.45}
+                onChange={(event) => onStyleChange(selectedTextItem, { lineHeight: Number(event.target.value) })}
+              />
+            </label>
+            <label className="field">
+              <span>字間: {selectedTextItem.letterSpacing || 0}px</span>
+              <input
+                type="range"
+                min="-2"
+                max="12"
+                step="0.2"
+                value={selectedTextItem.letterSpacing || 0}
+                onChange={(event) => onStyleChange(selectedTextItem, { letterSpacing: Number(event.target.value) })}
+              />
+            </label>
             <label className="field">
               <span>文字色</span>
               <input
@@ -3800,6 +4213,7 @@ function ItemCard({
   isCaptionVisible,
   onOpenBoard,
   onEditBoard,
+  onUpdateBoardTitle,
   onBoardContextMenu,
   onEdit,
   onDelete,
@@ -3819,31 +4233,55 @@ function ItemCard({
     fontStyle: item.fontStyle || undefined,
     textDecoration: item.textDecoration || undefined,
     textAlign: item.textAlign || undefined,
+    fontFamily: item.fontFamily || undefined,
+    fontSize: item.fontSize ? `${item.fontSize}px` : undefined,
+    lineHeight: item.lineHeight || undefined,
+    letterSpacing: Number.isFinite(item.letterSpacing) ? `${item.letterSpacing}px` : undefined,
   };
+  const plainTextCardTypes = new Set(["note", "link", "text-sticker"]);
+  const isPlainTextCard = plainTextCardTypes.has(item.type);
 
   if (item.type === "board") {
     return (
       <article
         className="card board-card"
         data-board-drop-id={board?.id || ""}
-        onDoubleClick={() => board && onOpenBoard(board.id)}
         onContextMenu={(event) => board && onBoardContextMenu(event, board)}
       >
         {thumbnail && (
-          <div className="board-thumb">
+          <div className="board-thumb" onDoubleClick={() => board && onOpenBoard(board.id)}>
             <img src={thumbnail} alt="" />
           </div>
         )}
         <div className="card-body">
-          <h2
+          {!thumbnail && (
+            <button
+              className="ghost board-open-ghost"
+              type="button"
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                board && onOpenBoard(board.id);
+              }}
+            >
+              ダブルクリックで開く
+            </button>
+          )}
+          <EditableText
+            value={board?.title || item.title}
             className="card-title board-title"
+            placeholder="サブボード名"
+            displayAs="h2"
             style={{
-              color: board?.fontColor || undefined,
-              fontWeight: board?.fontWeight || undefined,
+              ...itemTextStyle,
+              color: board?.fontColor || item.textColor || undefined,
+              fontWeight: board?.fontWeight || item.fontWeight || undefined,
             }}
-          >
-            {board?.title || item.title}
-          </h2>
+            onSave={(nextTitle) => {
+              const trimmed = nextTitle.trim();
+              if (!trimmed || !board) return;
+              onUpdateBoardTitle(board.id, trimmed);
+            }}
+          />
           <p className="card-content">サブボード</p>
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -4046,6 +4484,40 @@ function ItemCard({
     );
   }
 
+  if (item.type === "note" || item.type === "text-sticker") {
+    return (
+      <article
+        className="card plain-card text-card"
+        onContextMenu={(event) => onItemContextMenu(event, item)}
+        onDoubleClick={() => onTextDoubleClick(item)}
+      >
+        <div className="card-body plain-card-body">
+          {!!item.label && <span className="chip inline-chip">{item.label}</span>}
+          {!!item.title?.trim() && (
+            <EditableText
+              value={item.title}
+              className="card-title plain-card-title"
+              placeholder="タイトル"
+              displayAs="h2"
+              style={itemTextStyle}
+              onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+            />
+          )}
+          <EditableText
+            value={item.content}
+            className="text-sticker-content"
+            placeholder="テキスト"
+            multiline
+            displayAs="p"
+            style={itemTextStyle}
+            onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
+          />
+        </div>
+        <ResizeHandle item={item} onResize={onResize} />
+      </article>
+    );
+  }
+
   if (item.type === "comment") {
     return (
       <article
@@ -4179,20 +4651,22 @@ function ItemCard({
 
   return (
     <article
-      className="card"
+      className={isPlainTextCard ? "card plain-card" : "card"}
       onContextMenu={(event) => onItemContextMenu(event, item)}
       onDoubleClick={() => onTextDoubleClick(item)}
     >
-      <div className="card-body">
-        <div className="card-kicker">{itemLabels[item.type]}</div>
-        <EditableText
-          value={item.title}
-          className="card-title"
-          placeholder={itemLabels[item.type]}
-          displayAs="h2"
-          style={itemTextStyle}
-          onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
-        />
+      <div className={isPlainTextCard ? "card-body plain-card-body" : "card-body"}>
+        {!isPlainTextCard && <div className="card-kicker">{itemLabels[item.type]}</div>}
+        {(item.title?.trim() || !isPlainTextCard) && (
+          <EditableText
+            value={item.title}
+            className={isPlainTextCard ? "card-title plain-card-title" : "card-title"}
+            placeholder={itemLabels[item.type]}
+            displayAs="h2"
+            style={itemTextStyle}
+            onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
+          />
+        )}
         {item.label && <span className="chip inline-chip">{item.label}</span>}
         <EditableText
           value={item.content}
@@ -4806,7 +5280,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   const [cropRect, setCropRect] = useState(null);
   const [textAnnotations, setTextAnnotations] = useState([]);
   const [activeTextId, setActiveTextId] = useState(null);
-  const [wrapSize, setWrapSize] = useState({ width: 900, height: 520 });
+  const [wrapSize, setWrapSize] = useState({ width: IMAGE_EDIT_CANVAS_WIDTH, height: IMAGE_EDIT_CANVAS_HEIGHT });
   const activeText = textAnnotations.find((annotation) => annotation.id === activeTextId) || null;
 
   useEffect(() => {
@@ -4839,7 +5313,10 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
       if (!rect) return;
-      setWrapSize({ width: rect.width || 900, height: rect.height || 520 });
+      setWrapSize({
+        width: rect.width || IMAGE_EDIT_CANVAS_WIDTH,
+        height: rect.height || IMAGE_EDIT_CANVAS_HEIGHT,
+      });
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -4883,8 +5360,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
       {
         id: annotationId,
         text: initialText,
-        x: clamp(Math.round(point.x), 0, 900),
-        y: clamp(Math.round(point.y), 0, 520),
+        x: clamp(Math.round(point.x), 0, IMAGE_EDIT_CANVAS_WIDTH),
+        y: clamp(Math.round(point.y), 0, IMAGE_EDIT_CANVAS_HEIGHT),
         fontSize: Math.max(14, brushSize * 4),
         color: brushColor,
         angleDeg: 0,
@@ -4907,8 +5384,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
       {
         ...activeText,
         id: duplicateId,
-        x: clamp((activeText.x || 0) + 18, 0, 900),
-        y: clamp((activeText.y || 0) + 18, 0, 520),
+        x: clamp((activeText.x || 0) + 18, 0, IMAGE_EDIT_CANVAS_WIDTH),
+        y: clamp((activeText.y || 0) + 18, 0, IMAGE_EDIT_CANVAS_HEIGHT),
       },
     ]);
     setActiveTextId(duplicateId);
@@ -4939,8 +5416,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     function handlePointerMove(moveEvent) {
       const wrapRect = wrapRef.current?.getBoundingClientRect();
       if (!wrapRect || !textTransformRef.current) return;
-      const scaleX = 900 / Math.max(wrapRect.width, 1);
-      const scaleY = 520 / Math.max(wrapRect.height, 1);
+      const scaleX = IMAGE_EDIT_CANVAS_WIDTH / Math.max(wrapRect.width, 1);
+      const scaleY = IMAGE_EDIT_CANVAS_HEIGHT / Math.max(wrapRect.height, 1);
       const deltaX = (moveEvent.clientX - textTransformRef.current.startX) * scaleX;
       const deltaY = (moveEvent.clientY - textTransformRef.current.startY) * scaleY;
       if (textTransformRef.current.mode === "resize") {
@@ -4948,8 +5425,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
         updateAnnotation(textTransformRef.current.annotationId, { fontSize: nextSize });
       } else {
         updateAnnotation(textTransformRef.current.annotationId, {
-          x: clamp(Math.round(textTransformRef.current.originX + deltaX), 0, 900),
-          y: clamp(Math.round(textTransformRef.current.originY + deltaY), 0, 520),
+          x: clamp(Math.round(textTransformRef.current.originX + deltaX), 0, IMAGE_EDIT_CANVAS_WIDTH),
+          y: clamp(Math.round(textTransformRef.current.originY + deltaY), 0, IMAGE_EDIT_CANVAS_HEIGHT),
         });
       }
     }
@@ -5019,8 +5496,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
     const point = {
-      x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 900,
-      y: ((event.clientY - rect.top) / Math.max(rect.height, 1)) * 520,
+      x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * IMAGE_EDIT_CANVAS_WIDTH,
+      y: ((event.clientY - rect.top) / Math.max(rect.height, 1)) * IMAGE_EDIT_CANVAS_HEIGHT,
     };
     addTextAnnotationAtPoint(point, "");
   }
@@ -5186,8 +5663,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
           <canvas
             ref={canvasRef}
             className={mode === "crop" ? "draw-canvas crop-canvas" : "draw-canvas"}
-            width="900"
-            height="520"
+            width={IMAGE_EDIT_CANVAS_WIDTH}
+            height={IMAGE_EDIT_CANVAS_HEIGHT}
             onPointerDown={startPointer}
             onPointerMove={movePointer}
             onPointerUp={endPointer}
@@ -5196,8 +5673,8 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
           {mode === "annotate" && (
             <div className="annotation-layer">
               {textAnnotations.map((annotation) => {
-                const scaleX = wrapSize.width / 900;
-                const scaleY = wrapSize.height / 520;
+                const scaleX = wrapSize.width / IMAGE_EDIT_CANVAS_WIDTH;
+                const scaleY = wrapSize.height / IMAGE_EDIT_CANVAS_HEIGHT;
                 const left = (annotation.x || 0) * scaleX;
                 const top = (annotation.y || 0) * scaleY;
                 const fontSize = (annotation.fontSize || 24) * scaleX;
@@ -5246,10 +5723,10 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             <div
               className="crop-overlay"
               style={{
-                left: `${(cropRect.x / 900) * 100}%`,
-                top: `${(cropRect.y / 520) * 100}%`,
-                width: `${(cropRect.width / 900) * 100}%`,
-                height: `${(cropRect.height / 520) * 100}%`,
+                left: `${(cropRect.x / IMAGE_EDIT_CANVAS_WIDTH) * 100}%`,
+                top: `${(cropRect.y / IMAGE_EDIT_CANVAS_HEIGHT) * 100}%`,
+                width: `${(cropRect.width / IMAGE_EDIT_CANVAS_WIDTH) * 100}%`,
+                height: `${(cropRect.height / IMAGE_EDIT_CANVAS_HEIGHT) * 100}%`,
               }}
             />
           )}
@@ -5260,7 +5737,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   );
 }
 
-function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onTitleChange }) {
+function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onTitleChange, onAnnotate }) {
   const [isZoomed, setIsZoomed] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -5342,6 +5819,18 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
       <button className="lightbox-close" type="button" onClick={onClose} aria-label="閉じる">
         ×
       </button>
+      {item.type === "image" && (
+        <button
+          className="lightbox-annotate"
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAnnotate?.();
+          }}
+        >
+          画像に書き込み
+        </button>
+      )}
       <button
         className="lightbox-nav lightbox-prev"
         type="button"
