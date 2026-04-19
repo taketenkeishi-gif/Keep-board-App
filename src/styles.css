@@ -12,6 +12,7 @@
   --shadow-strong: 0 24px 70px rgba(17, 20, 24, 0.24);
   --board-grid-color: rgba(126, 134, 146, 0.34);
   --board-grid-surface: color-mix(in srgb, var(--surface) 96%, #d9dee6 4%);
+  --board-grid-size: 72px;
 }
 
 :root[data-theme="dark"] {
@@ -362,6 +363,26 @@ button {
   color: var(--accent-dark);
 }
 
+.page-delete {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface) 86%);
+  color: var(--danger);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.page-delete:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .crumbs {
   display: flex;
   flex-wrap: wrap;
@@ -446,7 +467,7 @@ button {
 .free-board.grid-dot::before {
   background:
     radial-gradient(circle at 1px 1px, var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 88%, transparent)) 1px, transparent 1.2px) 0 0 /
-      84px 60px,
+      var(--board-grid-size) var(--board-grid-size),
     color-mix(in srgb, var(--board-grid-surface) 100%, transparent);
   opacity: var(--board-opacity, 0.95);
 }
@@ -458,17 +479,17 @@ button {
         var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 0,
         var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 1px,
         transparent 1px,
-        transparent 84px
+        transparent var(--board-grid-size)
       )
-      0 0 / 84px 100%,
+      0 0 / var(--board-grid-size) 100%,
     linear-gradient(
         to bottom,
         var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 0,
         var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 1px,
         transparent 1px,
-        transparent 60px
+        transparent var(--board-grid-size)
       )
-      0 0 / 100% 60px,
+      0 0 / 100% var(--board-grid-size),
     color-mix(in srgb, var(--board-grid-surface) 100%, transparent);
   opacity: var(--board-opacity, 0.95);
 }

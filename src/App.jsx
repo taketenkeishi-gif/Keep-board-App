@@ -283,27 +283,9 @@ function ensurePagesInState(rawState) {
 }
 
 function createInitialState() {
-  const createdAt = now();
-  const firstBoardId = createId("board");
-  const firstPage = buildDefaultPage(firstBoardId, 0, "1");
   return {
-    boards: [
-      {
-        id: firstBoardId,
-        title: "最初のボード",
-        parentBoardId: null,
-        createdAt,
-        updatedAt: createdAt,
-        order: 0,
-      },
-    ],
-    pages: [
-      {
-        ...firstPage,
-        createdAt,
-        updatedAt: createdAt,
-      },
-    ],
+    boards: [],
+    pages: [],
     items: [],
   };
 }
@@ -907,6 +889,53 @@ export default function App() {
     });
     setCurrentPageId(nextPageId);
     setSelectedItemIds([]);
+  }
+
+  function deleteCurrentPage() {
+    if (!currentBoardId || !currentBoardPages.length) return;
+    if (currentBoardPages.length <= 1) return;
+    const targetPageId = activePageId || currentBoardPages[0].id;
+    const currentIndex = currentBoardPages.findIndex((page) => page.id === targetPageId);
+    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextPageId =
+      currentBoardPages[safeIndex + 1]?.id ||
+      currentBoardPages[safeIndex - 1]?.id ||
+      currentBoardPages[0]?.id ||
+      "";
+    if (!confirm("現在のページを削除しますか？")) return;
+
+    setSelectedItemIds([]);
+    setSelectedTableCell(null);
+    setActiveCaptionId(null);
+    setCurrentPageId(nextPageId);
+
+    updateState((previous) => {
+      const boardPages = getBoardPages(previous, currentBoardId);
+      if (boardPages.length <= 1) return previous;
+      const pageIndex = boardPages.findIndex((page) => page.id === targetPageId);
+      const pageToDelete = boardPages[pageIndex >= 0 ? pageIndex : 0];
+      if (!pageToDelete) return previous;
+
+      const remainingBoardPages = normalizeOrders(
+        boardPages.filter((page) => page.id !== pageToDelete.id).sort(sortByOrder),
+      );
+      const remainingPageIds = new Set(remainingBoardPages.map((page) => page.id));
+      const normalizedById = new Map(remainingBoardPages.map((page) => [page.id, page]));
+
+      return {
+        ...previous,
+        pages: (previous.pages || [])
+          .filter((page) => page.boardId !== currentBoardId || remainingPageIds.has(page.id))
+          .map((page) => (page.boardId === currentBoardId ? normalizedById.get(page.id) || page : page)),
+        items: previous.items.filter(
+          (item) =>
+            !(
+              item.boardId === currentBoardId &&
+              (item.pageId || getDefaultPageId(previous, currentBoardId)) === pageToDelete.id
+            ),
+        ),
+      };
+    });
   }
 
   function createQuickItem(type, position = null, overrides = {}) {
@@ -2087,6 +2116,16 @@ async function handleExternalDrop(event) {
                       aria-label="ページを追加"
                     >
                       ＋
+                    </button>
+                    <button
+                      className="page-delete"
+                      type="button"
+                      onClick={() => deleteCurrentPage()}
+                      title="現在のページを削除"
+                      aria-label="現在のページを削除"
+                      disabled={currentBoardPages.length <= 1}
+                    >
+                      －
                     </button>
                   </div>
                 )}
