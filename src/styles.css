@@ -282,12 +282,12 @@ button {
 .page-strip {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: min(920px, calc(100vw - 120px));
   margin-top: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
-  border-radius: 18px;
+  border-radius: 14px;
   background: color-mix(in srgb, var(--surface) 74%, transparent);
   box-shadow: 0 10px 26px rgba(18, 24, 31, 0.1);
   backdrop-filter: blur(14px);
@@ -311,9 +311,9 @@ button {
   gap: 0;
   align-items: center;
   justify-content: center;
-  min-width: 42px;
-  height: 42px;
-  padding: 0 14px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
@@ -342,12 +342,11 @@ button {
   font-weight: 900;
 }
 
-.page-nav,
 .page-add {
   display: inline-flex;
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   align-items: center;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
@@ -356,11 +355,6 @@ button {
   color: var(--ink);
   font-size: 16px;
   font-weight: 800;
-}
-
-.page-nav:disabled {
-  opacity: 0.35;
-  cursor: default;
 }
 
 .page-add {
@@ -435,10 +429,58 @@ button {
   border: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
   box-shadow: 0 20px 44px rgba(12, 16, 22, 0.2);
   backdrop-filter: blur(6px) saturate(1.02);
+  background: transparent;
+}
+
+.free-board::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--board-grid-surface) 100%, transparent);
+  opacity: var(--board-opacity, 0.95);
+  content: "";
+  pointer-events: none;
+}
+
+.free-board.grid-dot::before {
   background:
-    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--board-grid-color) 88%, transparent) 1px, transparent 1.2px) 0 0 /
-      18px 18px,
-    color-mix(in srgb, var(--surface) 34%, transparent);
+    radial-gradient(circle at 1px 1px, var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 88%, transparent)) 1px, transparent 1.2px) 0 0 /
+      84px 60px,
+    color-mix(in srgb, var(--board-grid-surface) 100%, transparent);
+  opacity: var(--board-opacity, 0.95);
+}
+
+.free-board.grid-line::before {
+  background:
+    linear-gradient(
+        to right,
+        var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 0,
+        var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 1px,
+        transparent 1px,
+        transparent 84px
+      )
+      0 0 / 84px 100%,
+    linear-gradient(
+        to bottom,
+        var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 0,
+        var(--board-grid-color-custom, color-mix(in srgb, var(--board-grid-color) 94%, transparent)) 1px,
+        transparent 1px,
+        transparent 60px
+      )
+      0 0 / 100% 60px,
+    color-mix(in srgb, var(--board-grid-surface) 100%, transparent);
+  opacity: var(--board-opacity, 0.95);
+}
+
+.free-board.grid-none::before {
+  background: color-mix(in srgb, var(--board-grid-surface) 100%, transparent);
+  opacity: var(--board-opacity, 0.95);
+}
+
+.free-board > * {
+  position: relative;
+  z-index: 1;
 }
 
 .free-board.tool-active::after {
@@ -536,9 +578,9 @@ button {
 }
 
 .draw-mode-btn {
-  min-width: 68px;
+  min-width: 38px;
   height: 34px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 9px;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
@@ -585,7 +627,8 @@ button {
 
 .draw-mini-btn {
   height: 34px;
-  padding: 0 12px;
+  min-width: 34px;
+  padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-radius: 9px;
   background: color-mix(in srgb, var(--surface) 80%, #131922 20%);
@@ -600,7 +643,8 @@ button {
 
 .draw-save-btn {
   height: 34px;
-  padding: 0 14px;
+  min-width: 36px;
+  padding: 0 12px;
   border: 1px solid color-mix(in srgb, var(--accent-dark) 66%, transparent);
   border-radius: 9px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, white 12%), var(--accent-dark));
@@ -690,6 +734,7 @@ button {
   flex-direction: column;
   background: var(--surface);
   cursor: pointer;
+  min-height: 0;
 }
 
 .board-thumb {
@@ -716,6 +761,7 @@ button {
   display: grid;
   gap: 6px;
   padding: 12px 14px 14px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
 }
 
 .board-card-body.overlay {
@@ -782,12 +828,22 @@ button {
   transition:
     opacity 170ms ease,
     transform 170ms ease;
+  pointer-events: none;
 }
 
 .media-card.caption-visible .media-caption,
 .media-card:hover .media-caption {
   opacity: 1;
   transform: translateY(0);
+}
+
+.media-caption .chip,
+.media-caption .caption-title,
+.media-caption .caption-content,
+.media-caption .inline-editor,
+.media-caption .rich-text-value,
+.media-caption .rich-text-editor {
+  pointer-events: auto;
 }
 
 .caption-title {
@@ -1061,8 +1117,34 @@ button {
   z-index: 30;
 }
 
-.menu-panel[hidden] {
-  display: none;
+.slide-panel {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-8px) scaleY(0.98);
+  transform-origin: top;
+  pointer-events: none;
+  transition:
+    max-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.slide-panel.open {
+  max-height: 720px;
+  opacity: 1;
+  transform: translateY(0) scaleY(1);
+  pointer-events: auto;
+}
+
+.menu-panel.slide-panel {
+  display: grid;
+}
+
+.menu-panel.slide-panel:not(.open) {
+  padding-top: 0;
+  padding-bottom: 0;
+  border-color: transparent;
 }
 
 .menu-panel button {
@@ -1126,6 +1208,34 @@ button {
 .sidebar-section {
   display: grid;
   gap: 10px;
+}
+
+.sidebar-tree {
+  gap: 8px;
+}
+
+.sidebar-tree-panel {
+  display: grid;
+  gap: 8px;
+  margin: -2px 0 6px 14px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition:
+    max-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 220ms ease,
+    transform 220ms ease;
+}
+
+.sidebar-tree-panel.open {
+  max-height: 840px;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .sidebar-title {
@@ -1250,10 +1360,80 @@ button {
   box-shadow: 0 18px 42px rgba(22, 28, 35, 0.22);
 }
 
+.dialog-image-editor {
+  width: min(1280px, calc(100vw - 48px));
+  height: min(92vh, 960px);
+  max-width: none;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.image-editor-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
+.image-editor-shell.embedded {
+  width: min(1280px, calc(100vw - 48px));
+  height: min(92vh, 960px);
+  margin: 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(18, 22, 30, 0.72);
+  backdrop-filter: blur(18px);
+}
+
+.image-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 8px;
+}
+
+.image-editor-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.image-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 20px 12px;
+}
+
+.image-edit-stage {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  padding: 0 20px 14px;
+}
+
+.image-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 20px 18px;
+}
+
 .dialog form {
   display: grid;
   gap: 14px;
   padding: 22px;
+}
+
+.dialog.dialog-image-editor form {
+  display: flex;
+  gap: 0;
+  padding: 0;
+  height: 100%;
 }
 
 .settings-group {
@@ -1481,6 +1661,34 @@ button {
   border-left: 3px solid color-mix(in srgb, var(--accent) 74%, transparent);
 }
 
+.comment-card {
+  overflow: visible;
+}
+
+.comment-tail-handle {
+  position: absolute;
+  left: var(--tail-x, 24px);
+  bottom: calc(-14px + var(--tail-y, 0px));
+  width: 18px;
+  height: 18px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 6px 14px rgba(10, 14, 20, 0.24);
+}
+
+.comment-tail-handle::before {
+  position: absolute;
+  top: -8px;
+  left: 6px;
+  width: 0;
+  height: 0;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid color-mix(in srgb, var(--surface) 94%, transparent);
+  border-left: 5px solid transparent;
+  content: "";
+}
+
 .column-headline {
   margin: 12px 0 0;
   color: var(--muted);
@@ -1681,12 +1889,9 @@ button {
 }
 
 .lightbox-annotate {
-  position: fixed;
-  top: 20px;
-  right: 76px;
-  z-index: 91;
   height: 44px;
-  padding: 0 14px;
+  min-width: 44px;
+  padding: 0 12px;
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.12);
@@ -1769,6 +1974,12 @@ button {
   right: 18px;
 }
 
+.lightbox.editing {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  padding: 18px;
+}
+
 .editable-lightbox-title {
   cursor: text;
   font-size: 18px;
@@ -1831,8 +2042,21 @@ button {
 
 .image-edit-wrap {
   position: relative;
-  width: min(96vw, 1440px);
-  min-height: min(78vh, 900px);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+  border-radius: 10px;
+  background: #111723;
+  overflow: hidden;
+}
+
+.image-edit-wrap .draw-canvas {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: #111723;
 }
 
 .annotation-layer {
@@ -1896,6 +2120,23 @@ button {
   border: 2px dashed #ffef7f;
   background: rgba(255, 239, 127, 0.2);
   pointer-events: none;
+}
+
+.lightbox-editor-actions {
+  position: fixed;
+  top: 20px;
+  right: 76px;
+  z-index: 91;
+  display: flex;
+  gap: 8px;
+}
+
+.lightbox-editor {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px 18px 18px;
 }
 
 @media (max-width: 680px) {

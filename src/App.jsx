@@ -30,6 +30,7 @@ const BOARD_CANVAS_WIDTH = 1320;
 const BOARD_DROP_STEP = 20;
 const BOARD_ZOOM_MIN = 0.67;
 const BOARD_ZOOM_MAX = 3;
+const CARD_DRAG_DISTANCE_THRESHOLD = 7;
 const SWAP_OVERLAP_RATIO = 0.38;
 const SWAP_ZONE_INSET_RATIO = 0.3;
 const BOARD_EDGE_PADDING = 20;
@@ -41,6 +42,9 @@ const defaultSettings = {
   fontSize: 15,
   sortMode: "manual",
   boardZoom: 1,
+  boardOpacity: 0.95,
+  boardGridType: "dot",
+  boardGridOpacity: 0.34,
   appBackgroundMode: "theme",
   appBackgroundColor: "",
   appBackgroundImage: "",
@@ -48,6 +52,16 @@ const defaultSettings = {
   topbarBackgroundColor: "",
   topbarBackgroundImage: "",
 };
+
+const fontFamilyOptions = [
+  { label: "Default", value: "" },
+  { label: "Yu Gothic UI", value: '"Yu Gothic UI", "Yu Gothic", "Meiryo", sans-serif' },
+  { label: "Hiragino Sans", value: '"Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif' },
+  { label: "Noto Sans JP", value: '"Noto Sans JP", "Noto Sans", sans-serif' },
+  { label: "Segoe UI", value: '"Segoe UI", "Noto Sans JP", sans-serif' },
+  { label: "Arial", value: "Arial, sans-serif" },
+  { label: "Times New Roman", value: '"Times New Roman", serif' },
+];
 
 const itemLabels = {
   note: "メモ",
@@ -1517,16 +1531,58 @@ export default function App() {
   function patchItem(itemId, patch) {
     updateState((previous) => ({
       ...previous,
-      items: previous.items.map((item) => (item.id === itemId ? { ...item, ...patch, updatedAt: now() } : item)),
+      items: previous.items.map((item) => {
+        if (item.id !== itemId) return item;
+        const merged = { ...item, ...patch, updatedAt: now() };
+        const shouldAutoSizeTextSticker =
+          merged.type === "text-sticker" &&
+          !("widthUnits" in patch) &&
+          !("heightUnits" in patch) &&
+          [
+            "title",
+            "content",
+            "fontSize",
+            "fontFamily",
+            "fontWeight",
+            "fontStyle",
+            "lineHeight",
+            "letterSpacing",
+          ].some((key) => key in patch);
+        if (!shouldAutoSizeTextSticker) return merged;
+        const stickerSize = computeTextStickerUnits(merged);
+        return {
+          ...merged,
+          widthUnits: stickerSize.widthUnits,
+          heightUnits: stickerSize.heightUnits,
+        };
+      }),
     }));
   }
 
   function applyRichTextCommand(command, value = null) {
     const editorElement = activeRichEditor?.element;
     if (!(editorElement instanceof HTMLElement)) return;
-    editorElement.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (!selection) return;
+    let hasSelectionInsideEditor = false;
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      hasSelectionInsideEditor =
+        editorElement.contains(range.startContainer) && editorElement.contains(range.endContainer);
+    }
+    if (!hasSelectionInsideEditor && activeRichEditor?.range) {
+      selection.removeAllRanges();
+      selection.addRange(activeRichEditor.range.cloneRange());
+      hasSelectionInsideEditor = true;
+    }
+    if (!hasSelectionInsideEditor) return;
     document.execCommand("styleWithCSS", false, true);
     document.execCommand(command, false, value);
+    if (selection.rangeCount > 0) {
+      setActiveRichEditor((current) =>
+        current?.element === editorElement ? { ...current, range: selection.getRangeAt(0).cloneRange() } : current,
+      );
+    }
   }
 
   function updateTableItem(itemId, updater) {
@@ -2002,18 +2058,6 @@ async function handleExternalDrop(event) {
                 )}
                 {currentBoardPages.length > 0 && (
                   <div className="page-strip" onClick={(event) => event.stopPropagation()}>
-                    <button
-                      className="page-nav"
-                      type="button"
-                      onClick={() => {
-                        if (currentPageIndex <= 0) return;
-                        setCurrentPageId(currentBoardPages[currentPageIndex - 1].id);
-                        setSelectedItemIds([]);
-                      }}
-                      disabled={currentPageIndex <= 0}
-                    >
-                      ←
-                    </button>
                     <div className="page-tabs" role="tablist" aria-label="ページ切り替え">
                       {currentBoardPages.map((page, index) => {
                         const isActive = page.id === activePageId;
@@ -2036,18 +2080,6 @@ async function handleExternalDrop(event) {
                       })}
                     </div>
                     <button
-                      className="page-nav"
-                      type="button"
-                      onClick={() => {
-                        if (currentPageIndex >= currentBoardPages.length - 1) return;
-                        setCurrentPageId(currentBoardPages[currentPageIndex + 1].id);
-                        setSelectedItemIds([]);
-                      }}
-                      disabled={currentPageIndex >= currentBoardPages.length - 1}
-                    >
-                      →
-                    </button>
-                    <button
                       className="page-add"
                       type="button"
                       onClick={() => createPage()}
@@ -2069,7 +2101,7 @@ async function handleExternalDrop(event) {
                 >
                   <span>＋</span>
                 </button>
-                <div className="menu-panel" hidden={!isAddMenuOpen}>
+                <div className={isAddMenuOpen ? "menu-panel slide-panel open" : "menu-panel slide-panel"}>
                   <button type="button" onClick={() => openAdd("note")}>
                     ＋ メモ
                   </button>
@@ -2164,6 +2196,9 @@ async function handleExternalDrop(event) {
               items={pageItems}
               boards={state.boards}
               zoom={settings.boardZoom}
+              boardOpacity={settings.boardOpacity}
+              boardGridType={settings.boardGridType}
+              boardGridOpacity={settings.boardGridOpacity}
               selectedIds={selectedItemIds}
               selectedTableCell={selectedTableCell}
               onSelectedIdsChange={setSelectedItemIds}
@@ -2400,7 +2435,7 @@ async function handleExternalDrop(event) {
           onPrevious={() => setLightboxId(visibleImages[lightboxIndex - 1]?.id || lightboxItem.id)}
           onNext={() => setLightboxId(visibleImages[lightboxIndex + 1]?.id || lightboxItem.id)}
           onTitleChange={(title) => patchItem(lightboxItem.id, { title })}
-          onAnnotate={() => setDialog({ kind: "imageEdit", mode: "annotate", item: lightboxItem })}
+          onImageSave={(nextImagePath) => patchItem(lightboxItem.id, { imagePath: nextImagePath })}
         />
       )}
     </div>
@@ -2462,6 +2497,67 @@ function clampPosition(item, position) {
   return {
     x: clamp(Math.round(position.x / 10) * 10, 0, maxX),
     y: Math.max(0, Math.round(position.y / 10) * 10),
+  };
+}
+
+function computeTextStickerUnits(item) {
+  if (typeof document === "undefined") {
+    return {
+      widthUnits: clamp(item.widthUnits || 3, 1, MAX_CARD_SPAN),
+      heightUnits: clamp(item.heightUnits || 2, 1, MAX_CARD_ROWS),
+    };
+  }
+
+  const probe = document.createElement("div");
+  const titleProbe = document.createElement("div");
+  const bodyProbe = document.createElement("div");
+  const titleText = richTextToPlainText(item.title || "").trim();
+  const bodyText = richTextToPlainText(item.content || "") || "テキスト";
+  const fontSize = Math.max(12, Number(item.fontSize) || 28);
+  const lineHeight =
+    typeof item.lineHeight === "number" ? item.lineHeight : Math.max(1.2, Number(item.lineHeight) || 1.35);
+  const letterSpacing = Number.isFinite(item.letterSpacing) ? Number(item.letterSpacing) : 0;
+  const fontFamily =
+    item.fontFamily ||
+    '"Avenir Next", "SF Pro Text", "SF Pro Display", "Noto Sans JP", "Hiragino Kaku Gothic ProN", system-ui, sans-serif';
+
+  probe.style.position = "fixed";
+  probe.style.left = "-99999px";
+  probe.style.top = "-99999px";
+  probe.style.maxWidth = `${BOARD_CANVAS_WIDTH - BOARD_EDGE_PADDING * 2}px`;
+  probe.style.padding = "4px 6px";
+  probe.style.margin = "0";
+  probe.style.whiteSpace = "pre-wrap";
+  probe.style.overflowWrap = "anywhere";
+  probe.style.wordBreak = "break-word";
+  probe.style.fontFamily = fontFamily;
+  probe.style.fontSize = `${fontSize}px`;
+  probe.style.fontWeight = item.fontWeight || "600";
+  probe.style.fontStyle = item.fontStyle || "normal";
+  probe.style.lineHeight = String(lineHeight);
+  probe.style.letterSpacing = `${letterSpacing}px`;
+  probe.style.width = "max-content";
+  probe.style.display = "inline-block";
+  probe.style.background = "transparent";
+  probe.style.border = "0";
+  probe.style.pointerEvents = "none";
+
+  titleProbe.style.fontSize = `${Math.max(16, Math.round(fontSize * 0.66))}px`;
+  titleProbe.style.fontWeight = item.fontWeight || "700";
+  titleProbe.style.marginBottom = titleText ? "6px" : "0";
+  titleProbe.textContent = titleText;
+  bodyProbe.textContent = bodyText;
+  probe.append(titleProbe, bodyProbe);
+
+  document.body.appendChild(probe);
+  const rect = probe.getBoundingClientRect();
+  probe.remove();
+
+  const pixelWidth = clamp(Math.ceil(rect.width + 8), 42, BOARD_CANVAS_WIDTH - BOARD_EDGE_PADDING * 2);
+  const pixelHeight = Math.max(30, Math.ceil(rect.height + 6));
+  return {
+    widthUnits: clamp(Math.ceil((pixelWidth + BOARD_GAP) / (BOARD_UNIT + BOARD_GAP)), 1, MAX_CARD_SPAN),
+    heightUnits: clamp(Math.ceil((pixelHeight + BOARD_GAP) / (BOARD_ROW + BOARD_GAP)), 1, MAX_CARD_ROWS),
   };
 }
 
@@ -3203,6 +3299,9 @@ function BoardCanvas({
   items,
   boards,
   zoom,
+  boardOpacity = 0.95,
+  boardGridType = "dot",
+  boardGridOpacity = 0.34,
   selectedIds,
   onSelectedIdsChange,
   onZoomChange,
@@ -3360,12 +3459,18 @@ function BoardCanvas({
       const point = toBoardPoint(event.clientX, event.clientY);
       const deltaX = point.x - dragState.startPoint.x;
       const deltaY = point.y - dragState.startPoint.y;
+      const dragDistance = Math.hypot(deltaX, deltaY);
+      if (dragState.pending && dragDistance < CARD_DRAG_DISTANCE_THRESHOLD) return;
+      if (dragState.pending) {
+        document.body.dataset.internalCardDrag = "true";
+      }
       const nextOffset = { x: deltaX, y: deltaY };
       const collisionPreview = getDragCollisionPreview(positionedById, dragState, nextOffset);
       cancelAnimationFrame(dragFrameRef.current);
       dragFrameRef.current = requestAnimationFrame(() => {
         setDragState((currentState) => ({
           ...currentState,
+          pending: false,
           offset: nextOffset,
           collisionPreview,
         }));
@@ -3434,6 +3539,13 @@ function BoardCanvas({
       }
 
       if (!dragState) return;
+      if (dragState.pending) {
+        setDragState(null);
+        window.setTimeout(() => {
+          delete document.body.dataset.internalCardDrag;
+        }, 0);
+        return;
+      }
       const dropBoard = document
         .elementsFromPoint(event.clientX, event.clientY)
         .map((element) => element.closest?.("[data-board-drop-id]"))
@@ -3516,7 +3628,7 @@ function BoardCanvas({
     }
 
     if (event.button !== 0) return;
-    if (event.target.closest(".free-card, button, a, input, textarea, select, video")) return;
+    if (event.target.closest(".free-card, button, a, input, textarea, select")) return;
 
     if (activeTool === "draw") {
       event.preventDefault();
@@ -3580,7 +3692,7 @@ function BoardCanvas({
   function handleCardPointerDown(event, item) {
     if (activeTool === "draw") return;
     if (event.button !== 0) return;
-    if (event.target.closest("button, a, input, textarea, select, video, .resize-handle")) return;
+    if (event.target.closest("button, a, input, textarea, select, .resize-handle")) return;
 
     const point = toBoardPoint(event.clientX, event.clientY);
     const nextSelection =
@@ -3594,11 +3706,11 @@ function BoardCanvas({
 
     const dragIds = nextSelection.length ? nextSelection : [item.id];
     onSelectedIdsChange(dragIds);
-    document.body.dataset.internalCardDrag = "true";
     setDragState({
       ids: dragIds,
       startPoint: point,
       offset: { x: 0, y: 0 },
+      pending: true,
       origins: Object.fromEntries(
         dragIds.map((id) => {
           const positioned = positionedById.get(id);
@@ -3758,15 +3870,19 @@ function BoardCanvas({
               className={drawTool === "pen" ? "draw-mode-btn active" : "draw-mode-btn"}
               type="button"
               onClick={() => setDrawTool("pen")}
+              title="ペン"
+              aria-label="ペン"
             >
-              ペン
+              ✎
             </button>
             <button
               className={drawTool === "eraser" ? "draw-mode-btn active" : "draw-mode-btn"}
               type="button"
               onClick={() => setDrawTool("eraser")}
+              title="消しゴム"
+              aria-label="消しゴム"
             >
-              消しゴム
+              ⌫
             </button>
             <label className="field draw-field compact draw-color-field">
               <span>色</span>
@@ -3797,22 +3913,28 @@ function BoardCanvas({
               />
             </label>
             <button className="draw-mini-btn" type="button" onClick={handleDrawUndo} disabled={!drawStrokes.length}>
-              Undo
+              ↶
             </button>
             <button className="draw-mini-btn" type="button" onClick={handleDrawRedo} disabled={!drawRedoStrokes.length}>
-              Redo
+              ↷
             </button>
             <button className="draw-mini-btn" type="button" onClick={handleDrawDiscard}>
-              Discard
+              ×
             </button>
             <button className="draw-save-btn" type="button" onClick={handleDrawSave}>
-              Save
+              ✓
             </button>
           </div>
         )}
         <section
           ref={boardRef}
-          className={activeTool === "draw" ? "free-board tool-active draw-mode" : activeTool ? "free-board tool-active" : "free-board"}
+          className={[
+            "free-board",
+            boardGridType === "grid" ? "grid-line" : boardGridType === "none" ? "grid-none" : "grid-dot",
+            activeTool === "draw" ? "tool-active draw-mode" : activeTool ? "tool-active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           data-board-root="true"
           data-zoom={zoom}
           style={{
@@ -3820,6 +3942,8 @@ function BoardCanvas({
             minHeight: canvasHeight,
             transform: `scale(${zoom})`,
             transformOrigin: "top left",
+            "--board-opacity": clamp(Number(boardOpacity) || 0.95, 0.3, 1),
+            "--board-grid-color-custom": `rgba(126, 134, 146, ${clamp(Number(boardGridOpacity) || 0.34, 0, 1)})`,
           }}
         >
           {positionedItems.map((item) => (
@@ -3943,7 +4067,7 @@ function FreeCard({
         top: item.y || 0,
         width: size.width,
         height: size.height,
-        zIndex: item.type === "text-sticker" ? 9 : item.sticker ? 7 : undefined,
+        zIndex: Number.isFinite(item.zIndex) ? item.zIndex : item.type === "text-sticker" ? 9 : item.sticker ? 7 : undefined,
         transform: dragOffset ? `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` : undefined,
       }}
       onDragStart={(event) => event.preventDefault()}
@@ -4066,23 +4190,65 @@ function BoardSidebar({
     <aside className="board-sidebar">
       <div className="board-sidebar-tab">Tools</div>
       <div className="board-sidebar-panel">
-        <section className="sidebar-section">
+        <section className="sidebar-section sidebar-tree">
           <div className="sidebar-title">メニュー</div>
-          <div className="sidebar-root-grid">
-            <button className={showAddPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleAddPanel}>
-              <span>＋</span>
-              <small>カード</small>
-            </button>
-            <button className={showShapePanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleShapePanel}>
-              <span>✎</span>
-              <small>図形</small>
-            </button>
-            <button className={showLabelPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleLabelPanel}>
-              <span>#</span>
-              <small>ラベル</small>
-            </button>
+          <button className={showAddPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleAddPanel}>
+            <span>＋</span>
+            <small>カード</small>
+          </button>
+          <div className={showAddPanel ? "sidebar-tree-panel open" : "sidebar-tree-panel"} aria-hidden={!showAddPanel}>
+            <div className="sidebar-tool-grid">
+              {addTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
+                  type="button"
+                  draggable
+                  onClick={() => onPick(tool.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                    event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
+                  }}
+                >
+                  <span>{tool.icon}</span>
+                  <small>{tool.label}</small>
+                </button>
+              ))}
+            </div>
           </div>
-          {showLabelPanel && (
+
+          <button className={showShapePanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleShapePanel}>
+            <span>✎</span>
+            <small>図形</small>
+          </button>
+          <div className={showShapePanel ? "sidebar-tree-panel open" : "sidebar-tree-panel"} aria-hidden={!showShapePanel}>
+            <div className="sidebar-tool-grid">
+              {shapeTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
+                  type="button"
+                  draggable
+                  onClick={() => onPick(tool.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
+                    event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
+                  }}
+                >
+                  <span>{tool.icon}</span>
+                  <small>{tool.label}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button className={showLabelPanel ? "tool-button active" : "tool-button"} type="button" onClick={onToggleLabelPanel}>
+            <span>#</span>
+            <small>ラベル</small>
+          </button>
+          <div className={showLabelPanel ? "sidebar-tree-panel open" : "sidebar-tree-panel"} aria-hidden={!showLabelPanel}>
             <div className="label-panel sidebar-subpanel">
               <label className="field">
                 <span>並び替え</span>
@@ -4111,58 +4277,8 @@ function BoardSidebar({
                 </button>
               )}
             </div>
-          )}
+          </div>
         </section>
-
-        {showAddPanel && (
-          <section className="sidebar-section">
-            <div className="sidebar-title">カード追加</div>
-            <div className="sidebar-tool-grid">
-              {addTools.map((tool) => (
-                <button
-                  key={tool.id}
-                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
-                  type="button"
-                  draggable
-                  onClick={() => onPick(tool.id)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "copy";
-                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
-                    event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
-                  }}
-                >
-                  <span>{tool.icon}</span>
-                  <small>{tool.label}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {showShapePanel && (
-          <section className="sidebar-section">
-            <div className="sidebar-title">図形追加</div>
-            <div className="sidebar-tool-grid">
-              {shapeTools.map((tool) => (
-                <button
-                  key={tool.id}
-                  className={activeTool === tool.id ? "tool-button active" : "tool-button"}
-                  type="button"
-                  draggable
-                  onClick={() => onPick(tool.id)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "copy";
-                    event.dataTransfer.setData("application/x-keep-tool", tool.id);
-                    event.dataTransfer.setData("text/plain", `keep-tool:${tool.id}`);
-                  }}
-                >
-                  <span>{tool.icon}</span>
-                  <small>{tool.label}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
 
         {selectedImageItem && (
           <section className="sidebar-section">
@@ -4235,6 +4351,19 @@ function BoardSidebar({
                 <span>×</span>
               </button>
             </div>
+            <label className="field">
+              <span>フォント</span>
+              <select
+                value={selectedTextItem.fontFamily || ""}
+                onChange={(event) => onStyleChange(selectedTextItem, { fontFamily: event.target.value })}
+              >
+                {fontFamilyOptions.map((option) => (
+                  <option key={option.label} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <p className="sidebar-empty">
               {activeRichEditor ? "文字を選択して装飾を適用します。" : "文字をダブルクリックして編集を開始します。"}
             </p>
@@ -4312,6 +4441,31 @@ function BoardSidebar({
             ) : (
               <p className="sidebar-empty">セルを選択すると編集UIが表示されます。</p>
             )}
+          </section>
+        )}
+
+        {selectedItem?.type === "comment" && (
+          <section className="sidebar-section">
+            <div className="sidebar-title">コメント表示</div>
+            <label className="field">
+              <span>重なり順: {selectedItem.zIndex || 10}</span>
+              <input
+                type="range"
+                min="1"
+                max="24"
+                value={selectedItem.zIndex || 10}
+                onChange={(event) => onStyleChange(selectedItem, { zIndex: Number(event.target.value) })}
+              />
+            </label>
+            <label className="label-check">
+              <input
+                type="checkbox"
+                checked={selectedItem.commentTailVisible !== false}
+                onChange={(event) => onStyleChange(selectedItem, { commentTailVisible: event.target.checked })}
+              />
+              <span>吹き出し先端を表示</span>
+            </label>
+            <p className="sidebar-empty">先端はカード上でドラッグして指し先を調整できます。</p>
           </section>
         )}
 
@@ -4539,8 +4693,36 @@ function ItemCard({
   const plainTextCardTypes = new Set(["text-sticker"]);
   const isPlainTextCard = plainTextCardTypes.has(item.type);
 
-  function activateEditor(field, element) {
-    onActivateRichEditor?.({ itemId: item.id, field, element });
+  function activateEditor(field, element, range = null) {
+    onActivateRichEditor?.({ itemId: item.id, field, element, range });
+  }
+
+  function beginCommentTailDrag(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originX = Number.isFinite(item.commentTailX) ? item.commentTailX : 24;
+    const originY = Number.isFinite(item.commentTailY) ? item.commentTailY : 0;
+
+    function handlePointerMove(moveEvent) {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      onPatchItem(item.id, {
+        commentTailX: clamp(Math.round(originX + dx), -120, 180),
+        commentTailY: clamp(Math.round(originY + dy), -80, 160),
+      });
+    }
+
+    function handlePointerUp() {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
   }
 
   if (item.type === "board") {
@@ -4555,7 +4737,7 @@ function ItemCard({
             <img src={thumbnail} alt="" />
           </div>
         )}
-        <div className={thumbnail ? "card-body board-card-body overlay" : "card-body board-card-body"}>
+        <div className="card-body board-card-body">
           {!thumbnail && (
             <button
               className="ghost board-open-ghost"
@@ -4626,13 +4808,18 @@ function ItemCard({
     return (
       <article
         className={isCaptionVisible ? "card media-card caption-visible" : "card media-card"}
-        onClick={() => onToggleCaption(isCaptionVisible ? null : item.id)}
         onDoubleClick={() => onOpenLightbox(item.id)}
         onContextMenu={(event) => onItemContextMenu(event, item)}
         onDragStart={(event) => event.preventDefault()}
       >
         <div className="media-frame">
-          <video src={item.imagePath} controls muted preload="metadata" draggable="false" />
+          <video
+            src={item.imagePath}
+            controls
+            muted
+            preload="metadata"
+            draggable="false"
+          />
           <div className="media-caption">
             {item.label && <div className="chip">{item.label}</div>}
             <EditableText
@@ -4796,7 +4983,7 @@ function ItemCard({
               displayAs="h2"
               style={itemTextStyle}
               onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
-              onActivate={(element) => activateEditor("title", element)}
+              onActivate={(element, range) => activateEditor("title", element, range)}
             />
           )}
           <RichTextEditable
@@ -4807,7 +4994,7 @@ function ItemCard({
             displayAs="p"
             style={itemTextStyle}
             onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
-            onActivate={(element) => activateEditor("content", element)}
+            onActivate={(element, range) => activateEditor("content", element, range)}
           />
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -4830,9 +5017,21 @@ function ItemCard({
             displayAs="p"
             style={itemTextStyle}
             onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
-            onActivate={(element) => activateEditor("content", element)}
+            onActivate={(element, range) => activateEditor("content", element, range)}
           />
         </div>
+        {item.commentTailVisible !== false && (
+          <button
+            className="comment-tail-handle"
+            type="button"
+            aria-label="吹き出し先端を移動"
+            style={{
+              "--tail-x": `${Number.isFinite(item.commentTailX) ? item.commentTailX : 24}px`,
+              "--tail-y": `${Number.isFinite(item.commentTailY) ? item.commentTailY : 0}px`,
+            }}
+            onPointerDown={beginCommentTailDrag}
+          />
+        )}
         <ResizeHandle item={item} onResize={onResize} />
       </article>
     );
@@ -4852,7 +5051,7 @@ function ItemCard({
             displayAs="h2"
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
-            onActivate={(element) => activateEditor("title", element)}
+            onActivate={(element, range) => activateEditor("title", element, range)}
           />
           <RichTextEditable
             value={item.headline || ""}
@@ -4861,7 +5060,7 @@ function ItemCard({
             displayAs="p"
             style={itemTextStyle}
             onSave={(nextHeadline) => onPatchItem(item.id, { headline: nextHeadline })}
-            onActivate={(element) => activateEditor("headline", element)}
+            onActivate={(element, range) => activateEditor("headline", element, range)}
           />
           <RichTextEditable
             value={item.content}
@@ -4871,7 +5070,7 @@ function ItemCard({
             displayAs="p"
             style={itemTextStyle}
             onSave={(nextBody) => onPatchItem(item.id, { content: nextBody })}
-            onActivate={(element) => activateEditor("content", element)}
+            onActivate={(element, range) => activateEditor("content", element, range)}
           />
         </div>
         <ResizeHandle item={item} onResize={onResize} />
@@ -4895,7 +5094,7 @@ function ItemCard({
             displayAs="h2"
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
-            onActivate={(element) => activateEditor("title", element)}
+            onActivate={(element, range) => activateEditor("title", element, range)}
           />
           <div className="table-grid" style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}>
             {rows.map((row, rowIndex) =>
@@ -4948,7 +5147,7 @@ function ItemCard({
             displayAs="h2"
             style={itemTextStyle}
             onSave={(nextTitle) => onPatchItem(item.id, { title: nextTitle })}
-            onActivate={(element) => activateEditor("title", element)}
+            onActivate={(element, range) => activateEditor("title", element, range)}
           />
         )}
         {item.label && <span className="chip inline-chip">{item.label}</span>}
@@ -4960,7 +5159,7 @@ function ItemCard({
           displayAs="p"
           style={itemTextStyle}
           onSave={(nextContent) => onPatchItem(item.id, { content: nextContent })}
-          onActivate={(element) => activateEditor("content", element)}
+          onActivate={(element, range) => activateEditor("content", element, range)}
         />
         {item.type === "link" && item.url && (
           <a className="card-link" href={item.url} target="_blank" rel="noreferrer">
@@ -4989,6 +5188,18 @@ function RichTextEditable({
   const isEmpty = !richTextToPlainText(normalizedValue).trim();
   const Tag = displayAs;
 
+  function getCurrentRange() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !ref.current) return null;
+    const range = selection.getRangeAt(0);
+    if (!ref.current.contains(range.startContainer) || !ref.current.contains(range.endContainer)) return null;
+    return range.cloneRange();
+  }
+
+  function notifyActivate() {
+    onActivate?.(ref.current, getCurrentRange());
+  }
+
   useEffect(() => {
     if (!editing || !ref.current) return;
     ref.current.innerHTML = normalizedValue;
@@ -5005,7 +5216,7 @@ function RichTextEditable({
       range.collapse(false);
       selection.removeAllRanges();
       selection.addRange(range);
-      onActivate?.(ref.current);
+      onActivate?.(ref.current, range.cloneRange());
     });
   }, [editing, onActivate]);
 
@@ -5038,9 +5249,12 @@ function RichTextEditable({
       contentEditable
       suppressContentEditableWarning
       data-placeholder={placeholder}
-      onFocus={() => onActivate?.(ref.current)}
+      onFocus={notifyActivate}
       onBlur={save}
-      onInput={() => onActivate?.(ref.current)}
+      onInput={notifyActivate}
+      onMouseUp={notifyActivate}
+      onKeyUp={notifyActivate}
+      onMouseDown={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         if (!multiline && event.key === "Enter") {
@@ -5235,11 +5449,11 @@ function ItemDialog({ item, type, onClose, onSave }) {
   );
 }
 
-function Dialog({ children, onClose }) {
+function Dialog({ children, onClose, variant = "default" }) {
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <section
-        className="dialog"
+        className={variant === "image-editor" ? "dialog dialog-image-editor" : "dialog"}
         role="dialog"
         aria-modal="true"
         onClick={(event) => event.stopPropagation()}
@@ -5408,6 +5622,42 @@ function SettingsDialog({ settings, theme, onClose, onSave }) {
             onChange={(event) => setDraft({ ...draft, boardZoom: Number(event.target.value) })}
           />
         </label>
+        <section className="settings-group">
+          <h3>ボード表示</h3>
+          <label className="field">
+            <span>ボード透明度: {Math.round((draft.boardOpacity ?? 0.95) * 100)}%</span>
+            <input
+              type="range"
+              min="0.3"
+              max="1"
+              step="0.01"
+              value={draft.boardOpacity ?? 0.95}
+              onChange={(event) => setDraft({ ...draft, boardOpacity: Number(event.target.value) })}
+            />
+          </label>
+          <label className="field">
+            <span>グリッド種別</span>
+            <select
+              value={draft.boardGridType || "dot"}
+              onChange={(event) => setDraft({ ...draft, boardGridType: event.target.value })}
+            >
+              <option value="dot">Dot</option>
+              <option value="grid">Grid</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>グリッド濃度: {Math.round((draft.boardGridOpacity ?? 0.34) * 100)}%</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={draft.boardGridOpacity ?? 0.34}
+              onChange={(event) => setDraft({ ...draft, boardGridOpacity: Number(event.target.value) })}
+            />
+          </label>
+        </section>
         <section className="settings-group">
           <h3>全体背景</h3>
           <label className="field">
@@ -5640,7 +5890,7 @@ function DrawDialog({ initialImage = "", title = "Draw Sticker", onClose, onSave
   );
 }
 
-function ImageEditDialog({ item, mode, onClose, onSave }) {
+function ImageEditorWorkspace({ item, mode, onCancel, onSave, embedded = false }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const drawingRef = useRef(false);
@@ -5683,7 +5933,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   }, [item?.id, item?.imagePath, mode]);
 
   useEffect(() => {
-    const element = wrapRef.current;
+    const element = canvasRef.current;
     if (!element) return;
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
@@ -5789,7 +6039,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     };
 
     function handlePointerMove(moveEvent) {
-      const wrapRect = wrapRef.current?.getBoundingClientRect();
+      const wrapRect = canvasRef.current?.getBoundingClientRect();
       if (!wrapRect || !textTransformRef.current) return;
       const scaleX = IMAGE_EDIT_CANVAS_WIDTH / Math.max(wrapRect.width, 1);
       const scaleY = IMAGE_EDIT_CANVAS_HEIGHT / Math.max(wrapRect.height, 1);
@@ -5868,7 +6118,7 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     if (target.closest(".annotation-text")) return;
-    const rect = wrapRef.current?.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     const point = {
       x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * IMAGE_EDIT_CANVAS_WIDTH,
@@ -5937,103 +6187,113 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
   }, [activeTextId, activeText]);
 
   return (
-    <Dialog onClose={onClose}>
-      <form onSubmit={handleSave}>
+    <form className={embedded ? "image-editor-shell embedded" : "image-editor-shell"} onSubmit={handleSave}>
+      <header className="image-editor-header">
         <h2>{mode === "crop" ? "画像をクリップ" : "画像に書き込み"}</h2>
-        {mode === "annotate" && (
-          <div className="draw-toolbar">
-            <label className="field draw-field">
-              <span>色</span>
-              <input
-                type="color"
-                value={
-                  annotateTool === "text" && activeTextId
-                    ? textAnnotations.find((annotation) => annotation.id === activeTextId)?.color || brushColor
-                    : brushColor
+      </header>
+      {mode === "annotate" && (
+        <div className="image-editor-toolbar">
+          <label className="field draw-field">
+            <span>色</span>
+            <input
+              type="color"
+              value={
+                annotateTool === "text" && activeTextId
+                  ? textAnnotations.find((annotation) => annotation.id === activeTextId)?.color || brushColor
+                  : brushColor
+              }
+              onChange={(event) => {
+                const nextColor = event.target.value;
+                setBrushColor(nextColor);
+                if (annotateTool === "text" && activeTextId) {
+                  updateAnnotation(activeTextId, { color: nextColor });
                 }
-                onChange={(event) => {
-                  const nextColor = event.target.value;
-                  setBrushColor(nextColor);
-                  if (annotateTool === "text" && activeTextId) {
-                    updateAnnotation(activeTextId, { color: nextColor });
-                  }
-                }}
-              />
-            </label>
-            <label className="field draw-field">
-              <span>{annotateTool === "draw" ? `太さ: ${brushSize}px` : "テキストサイズ"}</span>
-              <input
-                type="range"
-                min={annotateTool === "draw" ? "1" : "10"}
-                max={annotateTool === "draw" ? "30" : "220"}
-                value={
-                  annotateTool === "draw"
-                    ? brushSize
-                    : textAnnotations.find((annotation) => annotation.id === activeTextId)?.fontSize || 24
+              }}
+            />
+          </label>
+          <label className="field draw-field">
+            <span>{annotateTool === "draw" ? `太さ: ${brushSize}px` : "文字サイズ"}</span>
+            <input
+              type="range"
+              min={annotateTool === "draw" ? "1" : "10"}
+              max={annotateTool === "draw" ? "30" : "220"}
+              value={
+                annotateTool === "draw"
+                  ? brushSize
+                  : textAnnotations.find((annotation) => annotation.id === activeTextId)?.fontSize || 24
+              }
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (annotateTool === "draw") {
+                  setBrushSize(next);
+                } else if (activeTextId) {
+                  updateAnnotation(activeTextId, { fontSize: next });
                 }
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  if (annotateTool === "draw") {
-                    setBrushSize(next);
-                  } else if (activeTextId) {
-                    updateAnnotation(activeTextId, { fontSize: next });
-                  }
-                }}
-              />
-            </label>
-            <button
-              className={annotateTool === "draw" ? "toolbar-button compact accent" : "toolbar-button compact"}
-              type="button"
-              onClick={() => setAnnotateTool("draw")}
-            >
-              線
-            </button>
-            <button
-              className={annotateTool === "text" ? "toolbar-button compact accent" : "toolbar-button compact"}
-              type="button"
-              onClick={() => setAnnotateTool("text")}
-            >
-              文字
-            </button>
-            {annotateTool === "text" && (
-              <>
-                <button className="secondary" type="button" onClick={duplicateActiveTextAnnotation} disabled={!activeText}>
-                  複製
-                </button>
-                <button className="secondary" type="button" onClick={removeActiveTextAnnotation} disabled={!activeText}>
-                  削除
-                </button>
-                <label className="field draw-field compact">
-                  <span>角度</span>
-                  <input
-                    type="range"
-                    min="-180"
-                    max="180"
-                    value={activeText?.angleDeg || 0}
-                    onChange={(event) => activeText && updateAnnotation(activeText.id, { angleDeg: Number(event.target.value) })}
-                    disabled={!activeText}
-                  />
-                </label>
-              </>
-            )}
-            <button
-              className="secondary"
-              type="button"
-              onClick={() => restoreHistory(historyIndex - 1)}
-              disabled={historyIndex <= 0}
-            >
-              Undo
-            </button>
-            <button
-              className="secondary"
-              type="button"
-              onClick={() => restoreHistory(historyIndex + 1)}
-              disabled={historyIndex >= history.length - 1}
-            >
-              Redo
-            </button>
-          </div>
-        )}
+              }}
+            />
+          </label>
+          <button
+            className={annotateTool === "draw" ? "toolbar-button icon-only accent" : "toolbar-button icon-only"}
+            type="button"
+            onClick={() => setAnnotateTool("draw")}
+            title="ペン"
+            aria-label="ペン"
+          >
+            ✎
+          </button>
+          <button
+            className={annotateTool === "text" ? "toolbar-button icon-only accent" : "toolbar-button icon-only"}
+            type="button"
+            onClick={() => setAnnotateTool("text")}
+            title="テキスト"
+            aria-label="テキスト"
+          >
+            T
+          </button>
+          {annotateTool === "text" && (
+            <>
+              <button className="toolbar-button icon-only" type="button" onClick={duplicateActiveTextAnnotation} disabled={!activeText} title="複製" aria-label="複製">
+                ⧉
+              </button>
+              <button className="toolbar-button icon-only" type="button" onClick={removeActiveTextAnnotation} disabled={!activeText} title="削除" aria-label="削除">
+                ⌫
+              </button>
+              <label className="field draw-field compact">
+                <span>角度</span>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  value={activeText?.angleDeg || 0}
+                  onChange={(event) => activeText && updateAnnotation(activeText.id, { angleDeg: Number(event.target.value) })}
+                  disabled={!activeText}
+                />
+              </label>
+            </>
+          )}
+          <button
+            className="toolbar-button icon-only"
+            type="button"
+            onClick={() => restoreHistory(historyIndex - 1)}
+            disabled={historyIndex <= 0}
+            title="Undo"
+            aria-label="Undo"
+          >
+            ↶
+          </button>
+          <button
+            className="toolbar-button icon-only"
+            type="button"
+            onClick={() => restoreHistory(historyIndex + 1)}
+            disabled={historyIndex >= history.length - 1}
+            title="Redo"
+            aria-label="Redo"
+          >
+            ↷
+          </button>
+        </div>
+      )}
+      <div className="image-edit-stage">
         <div className="image-edit-wrap" ref={wrapRef} onDoubleClick={handleAnnotationWrapDoubleClick}>
           <canvas
             ref={canvasRef}
@@ -6106,16 +6366,32 @@ function ImageEditDialog({ item, mode, onClose, onSave }) {
             />
           )}
         </div>
-        <DialogActions onClose={onClose} />
-      </form>
+      </div>
+      <footer className="image-editor-footer">
+        <button className="secondary" type="button" onClick={onCancel}>
+          キャンセル
+        </button>
+        <button className="primary" type="submit">
+          保存
+        </button>
+      </footer>
+    </form>
+  );
+}
+
+function ImageEditDialog({ item, mode, onClose, onSave }) {
+  return (
+    <Dialog onClose={onClose} variant="image-editor">
+      <ImageEditorWorkspace item={item} mode={mode} onCancel={onClose} onSave={onSave} />
     </Dialog>
   );
 }
 
-function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onTitleChange, onAnnotate }) {
+function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onTitleChange, onImageSave }) {
   const [isZoomed, setIsZoomed] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editorMode, setEditorMode] = useState(null);
   const [titleDraft, setTitleDraft] = useState(item.title || "");
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mediaNaturalSize, setMediaNaturalSize] = useState({
@@ -6151,19 +6427,26 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
 
   useEffect(() => {
     function handleKeyDown(event) {
-      if (event.key === "Escape") onClose();
-      if (event.key === "ArrowLeft" && hasPrevious) onPrevious();
-      if (event.key === "ArrowRight" && hasNext) onNext();
+      if (event.key === "Escape") {
+        if (editorMode) {
+          setEditorMode(null);
+        } else {
+          onClose();
+        }
+      }
+      if (!editorMode && event.key === "ArrowLeft" && hasPrevious) onPrevious();
+      if (!editorMode && event.key === "ArrowRight" && hasNext) onNext();
       pingChrome();
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hasNext, hasPrevious, onClose, onNext, onPrevious]);
+  }, [editorMode, hasNext, hasPrevious, onClose, onNext, onPrevious]);
 
   useEffect(() => {
     pingChrome();
     setIsEditingTitle(false);
+    setEditorMode(null);
     setTitleDraft(item.title || "");
     setMediaNaturalSize({ width: item.mediaWidth || 0, height: item.mediaHeight || 0 });
   }, [item.id]);
@@ -6184,152 +6467,191 @@ function Lightbox({ item, hasPrevious, hasNext, onClose, onPrevious, onNext, onT
 
   return (
     <div
-      className={`${isZoomed ? "lightbox zoomed" : "lightbox"} ${showChrome ? "chrome-visible" : "chrome-hidden"}`}
+      className={`${isZoomed ? "lightbox zoomed" : "lightbox"} ${showChrome ? "chrome-visible" : "chrome-hidden"} ${editorMode ? "editing" : ""}`}
       role="dialog"
       aria-modal="true"
-      onClick={onClose}
+      onClick={() => {
+        if (!editorMode) onClose();
+      }}
       onMouseMove={pingChrome}
       onPointerDown={pingChrome}
     >
-      <button className="lightbox-close" type="button" onClick={onClose} aria-label="閉じる">
+      <button
+        className="lightbox-close"
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+        aria-label="閉じる"
+      >
         ×
       </button>
-      {item.type === "image" && (
-        <button
-          className="lightbox-annotate"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAnnotate?.();
-          }}
-        >
-          画像に書き込み
-        </button>
+      {item.type === "image" && !editorMode && (
+        <div className="lightbox-editor-actions">
+          <button
+            className="lightbox-annotate"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setEditorMode("annotate");
+            }}
+          >
+            ✎
+          </button>
+          <button
+            className="lightbox-annotate"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setEditorMode("crop");
+            }}
+          >
+            ✂
+          </button>
+        </div>
       )}
-      <button
-        className="lightbox-nav lightbox-prev"
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          pingChrome();
-          onPrevious();
-        }}
-        disabled={!hasPrevious}
-        aria-label="前の画像"
-      >
-        ‹
-      </button>
-      <figure
-        className="lightbox-figure"
-        style={
-          isZoomed && zoomMetrics
-            ? {
-                width: `${zoomMetrics.width}px`,
-                height: `${zoomMetrics.height}px`,
-              }
-            : undefined
-        }
-        onClick={(event) => event.stopPropagation()}
-        onDoubleClick={() => {
-          pingChrome();
-          setIsZoomed((value) => !value);
-        }}
-      >
-        {item.type === "video" ? (
-          <video
-            src={item.imagePath}
-            controls
-            autoPlay
-            onLoadedMetadata={(event) =>
-              setMediaNaturalSize({
-                width: event.currentTarget.videoWidth || item.mediaWidth || 0,
-                height: event.currentTarget.videoHeight || item.mediaHeight || 0,
-              })
-            }
-            style={
-              isZoomed && zoomMetrics ? { width: `${zoomMetrics.width}px`, height: `${zoomMetrics.height}px` } : undefined
-            }
-            onDoubleClick={(event) => {
+      {editorMode ? (
+        <div className="lightbox-editor" onClick={(event) => event.stopPropagation()}>
+          <ImageEditorWorkspace
+            item={item}
+            mode={editorMode}
+            embedded
+            onCancel={() => setEditorMode(null)}
+            onSave={(nextImagePath) => {
+              onImageSave?.(nextImagePath);
+              setEditorMode(null);
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          <button
+            className="lightbox-nav lightbox-prev"
+            type="button"
+            onClick={(event) => {
               event.stopPropagation();
+              pingChrome();
+              onPrevious();
+            }}
+            disabled={!hasPrevious}
+            aria-label="前の画像"
+          >
+            ‹
+          </button>
+          <figure
+            className="lightbox-figure"
+            style={
+              isZoomed && zoomMetrics
+                ? {
+                    width: `${zoomMetrics.width}px`,
+                    height: `${zoomMetrics.height}px`,
+                  }
+                : undefined
+            }
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={() => {
               pingChrome();
               setIsZoomed((value) => !value);
             }}
-          />
-        ) : (
-          <img
-            src={item.imagePath}
-            alt={item.title || "画像"}
-            onLoad={(event) =>
-              setMediaNaturalSize({
-                width: event.currentTarget.naturalWidth || item.mediaWidth || 0,
-                height: event.currentTarget.naturalHeight || item.mediaHeight || 0,
-              })
-            }
-            style={
-              isZoomed && zoomMetrics ? { width: `${zoomMetrics.width}px`, height: `${zoomMetrics.height}px` } : undefined
-            }
-            onDoubleClick={(event) => {
+          >
+            {item.type === "video" ? (
+              <video
+                src={item.imagePath}
+                controls
+                autoPlay
+                onLoadedMetadata={(event) =>
+                  setMediaNaturalSize({
+                    width: event.currentTarget.videoWidth || item.mediaWidth || 0,
+                    height: event.currentTarget.videoHeight || item.mediaHeight || 0,
+                  })
+                }
+                style={
+                  isZoomed && zoomMetrics ? { width: `${zoomMetrics.width}px`, height: `${zoomMetrics.height}px` } : undefined
+                }
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  pingChrome();
+                  setIsZoomed((value) => !value);
+                }}
+              />
+            ) : (
+              <img
+                src={item.imagePath}
+                alt={item.title || "画像"}
+                onLoad={(event) =>
+                  setMediaNaturalSize({
+                    width: event.currentTarget.naturalWidth || item.mediaWidth || 0,
+                    height: event.currentTarget.naturalHeight || item.mediaHeight || 0,
+                  })
+                }
+                style={
+                  isZoomed && zoomMetrics ? { width: `${zoomMetrics.width}px`, height: `${zoomMetrics.height}px` } : undefined
+                }
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  pingChrome();
+                  setIsZoomed((value) => !value);
+                }}
+              />
+            )}
+            <figcaption>
+              {item.label && <span className="chip">{item.label}</span>}
+              {isEditingTitle ? (
+                <input
+                  className="lightbox-title-input"
+                  value={titleDraft}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onBlur={() => {
+                    const next = titleDraft.trim();
+                    if (next) onTitleChange(next);
+                    setIsEditingTitle(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      const next = titleDraft.trim();
+                      if (next) onTitleChange(next);
+                      setIsEditingTitle(false);
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setTitleDraft(item.title || "");
+                      setIsEditingTitle(false);
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <strong
+                  className="editable-lightbox-title"
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    setTitleDraft(item.title || "");
+                    setIsEditingTitle(true);
+                  }}
+                >
+                  {item.title || "Untitled"}
+                </strong>
+              )}
+              {item.content && <span>{item.content}</span>}
+            </figcaption>
+          </figure>
+          <button
+            className="lightbox-nav lightbox-next"
+            type="button"
+            onClick={(event) => {
               event.stopPropagation();
               pingChrome();
-              setIsZoomed((value) => !value);
+              onNext();
             }}
-          />
-        )}
-        <figcaption>
-          {item.label && <span className="chip">{item.label}</span>}
-          {isEditingTitle ? (
-            <input
-              className="lightbox-title-input"
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.target.value)}
-              onBlur={() => {
-                const next = titleDraft.trim();
-                if (next) onTitleChange(next);
-                setIsEditingTitle(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  const next = titleDraft.trim();
-                  if (next) onTitleChange(next);
-                  setIsEditingTitle(false);
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setTitleDraft(item.title || "");
-                  setIsEditingTitle(false);
-                }
-              }}
-              autoFocus
-            />
-          ) : (
-            <strong
-              className="editable-lightbox-title"
-              onDoubleClick={(event) => {
-                event.stopPropagation();
-                setTitleDraft(item.title || "");
-                setIsEditingTitle(true);
-              }}
-            >
-              {item.title || "Untitled"}
-            </strong>
-          )}
-          {item.content && <span>{item.content}</span>}
-        </figcaption>
-      </figure>
-      <button
-        className="lightbox-nav lightbox-next"
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          pingChrome();
-          onNext();
-        }}
-        disabled={!hasNext}
-        aria-label="次の画像"
-      >
-        ›
-      </button>
+            disabled={!hasNext}
+            aria-label="次の画像"
+          >
+            ›
+          </button>
+        </>
+      )}
     </div>
   );
 }
