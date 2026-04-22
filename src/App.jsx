@@ -16,9 +16,9 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-const STORAGE_KEY = "keep-board-mvp-v2";
-const THEME_KEY = "keep-board-theme";
-const SETTINGS_KEY = "keep-board-settings";
+const STORAGE_KEY = "keep-board-mvp-v3";
+const THEME_KEY = "keep-board-theme-v2";
+const SETTINGS_KEY = "keep-board-settings-v2";
 const MIN_CARD_SPAN = 3;
 const MAX_CARD_SPAN = 10;
 const MIN_CARD_ROWS = 3;
@@ -291,7 +291,7 @@ function createInitialState() {
 }
 
 function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("keep-board-mvp-v1");
+  const saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) return createInitialState();
 
   try {
